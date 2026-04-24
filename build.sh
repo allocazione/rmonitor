@@ -20,7 +20,8 @@ if [ ${#MISSING_DEPS[@]} -ne 0 ]; then
     exit 1
 fi
 
-echo -n "Building rmonitor... "
+echo -n "Building rmonitor..."
+echo ""
 START_TIME=$(date +%s)
 cargo build --release --quiet
 
