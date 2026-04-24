@@ -1,14 +1,14 @@
 use std::fs;
-#[allow(unused_imports)]
-use std::path::Path;
-#[allow(unused_imports)]
+use std::collections::VecDeque;
+
+#[cfg(target_os = "linux")]
 use std::path::PathBuf;
+
+#[cfg(target_os = "windows")]
+use std::path::Path;
+
 use crate::core::state::UserCommandInfo;
 use crate::core::store::Store;
-#[allow(unused_imports)]
-use std::collections::VecDeque;
-#[allow(unused_imports)]
-use std::time::Duration;
 
 /// Fetch command history for all users on the system.
 pub fn fetch_user_history() -> Vec<UserCommandInfo> {

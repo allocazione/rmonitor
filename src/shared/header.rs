@@ -8,6 +8,7 @@ use ratatui::Frame;
 
 use crate::core::config::AppConfig;
 use crate::core::state::AppState;
+use crate::shared::fmt::{format_bytes, format_uptime};
 
 pub fn render(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfig) {
     let colors = config.get_colors();
@@ -78,26 +79,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfi
         }
 
         if width > 60 {
-            let os_lower = state.os_name.to_lowercase();
-            let (os_emoji, os_style) = if os_lower.contains("windows") {
-                ("🪟", Style::default().fg(Color::Cyan))
-            } else if os_lower.contains("ubuntu") {
-                ("🐧", Style::default().fg(Color::Red))
-            } else if os_lower.contains("debian") {
-                ("🌀", Style::default().fg(Color::Red))
-            } else if os_lower.contains("arch") {
-                ("🏔️", Style::default().fg(Color::Cyan))
-            } else if os_lower.contains("mac") || os_lower.contains("darwin") {
-                ("🍎", Style::default().fg(Color::White))
-            } else if os_lower.contains("fedora") {
-                ("🎩", Style::default().fg(Color::Blue))
-            } else if os_lower.contains("centos") || os_lower.contains("rhel") {
-                ("⚙️", Style::default().fg(Color::Red))
-            } else if os_lower.contains("linux") {
-                ("🐧", Style::default().fg(Color::Yellow))
-            } else {
-                ("💻", Style::default().fg(fg))
-            };
+            let (os_emoji, os_style) = os_branding(&state.os_name, fg);
 
             spans.push(Span::styled("  │  ", Style::default().fg(border)));
             spans.push(Span::styled(
@@ -175,38 +157,26 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfi
     frame.render_widget(paragraph, area);
 }
 
-/// Helper to format bytes into human readable format (KB, MB, GB, etc.)
-fn format_bytes(bytes: u64) -> String {
-    const KB: f64 = 1024.0;
-    const MB: f64 = KB * 1024.0;
-    const GB: f64 = MB * 1024.0;
+/// Map OS name to an emoji and accent color for the header display.
+///
+/// Uses a lookup table — add new distros by appending to the array.
+fn os_branding(os_name: &str, fallback_fg: Color) -> (&'static str, Style) {
+    const OS_TABLE: &[(&[&str], &str, Color)] = &[
+        (&["windows"],          "🪟", Color::Cyan),
+        (&["ubuntu"],           "🐧", Color::Red),
+        (&["debian"],           "🌀", Color::Red),
+        (&["arch"],             "🏔️",  Color::Cyan),
+        (&["mac", "darwin"],    "🍎", Color::White),
+        (&["fedora"],           "🎩", Color::Blue),
+        (&["centos", "rhel"],   "⚙️",  Color::Red),
+        (&["linux"],            "🐧", Color::Yellow),
+    ];
 
-    let b = bytes as f64;
-    if b >= GB {
-        format!("{:.1}GB", b / GB)
-    } else if b >= MB {
-        format!("{:.1}MB", b / MB)
-    } else if b >= KB {
-        format!("{:.1}KB", b / KB)
-    } else {
-        format!("{}B", bytes)
+    let lower = os_name.to_lowercase();
+    for &(patterns, emoji, color) in OS_TABLE {
+        if patterns.iter().any(|p| lower.contains(p)) {
+            return (emoji, Style::default().fg(color));
+        }
     }
-}
-
-/// Helper to format seconds into a human-readable uptime string.
-fn format_uptime(seconds: u64) -> String {
-    let days = seconds / 86400;
-    let hours = (seconds % 86400) / 3600;
-    let minutes = (seconds % 3600) / 60;
-    let secs = seconds % 60;
-
-    if days > 0 {
-        format!("{}d {:02}h {:02}m", days, hours, minutes)
-    } else if hours > 0 {
-        format!("{}h {:02}m {:02}s", hours, minutes, secs)
-    } else if minutes > 0 {
-        format!("{}m {:02}s", minutes, secs)
-    } else {
-        format!("{}s", secs)
-    }
+    ("💻", Style::default().fg(fallback_fg))
 }

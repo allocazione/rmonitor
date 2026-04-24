@@ -69,22 +69,18 @@ impl UnixConnectionProvider {
 
             let user = parts[0];
             
-            // Robustly find TTY and IP
-            let mut tty = parts[1].to_string();
+            // TTY is always the second field in `who` output (parts[1])
+            let tty = parts[1].to_string();
             let mut ip = "local".to_string();
             
-            for (i, part) in parts.iter().enumerate().skip(1) {
-                // Look for TTY-like strings: pts/X, ttyX, or just something after 'sshd'
-                if part.contains('/') || part.starts_with("tty") || part.starts_with(':') {
-                    tty = part.to_string();
-                }
-                
-                // Look for IP in parentheses
+            // Scan remaining parts only for IP in parentheses
+            for part in parts.iter().skip(2) {
                 if part.starts_with('(') && part.ends_with(')') {
                     let inner = &part[1..part.len()-1];
                     if !inner.is_empty() && !inner.starts_with(':') {
                         ip = inner.to_string();
                     }
+                    break; // IP found, no need to continue
                 }
             }
 

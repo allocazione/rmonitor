@@ -8,6 +8,7 @@ use ratatui::Frame;
 
 use crate::core::config::AppConfig;
 use crate::core::state::{AppState, ProcessSort};
+use crate::shared::fmt::format_bytes;
 
 /// Render the Processes monitoring panel.
 pub fn render(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfig) {
@@ -92,7 +93,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfi
     ])
     .height(1);
 
-    let mut rows: Vec<Row> = Vec::new();
+    let mut rows: Vec<Row> = Vec::with_capacity(state.processes.len());
 
     if state.processes.is_empty() {
         rows.push(
@@ -156,20 +157,3 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfi
     frame.render_stateful_widget(table, chunks[1], &mut table_state);
 }
 
-/// Format bytes to human-readable string.
-fn format_bytes(bytes: u64) -> String {
-    const KB: f64 = 1024.0;
-    const MB: f64 = KB * 1024.0;
-    const GB: f64 = MB * 1024.0;
-
-    let b = bytes as f64;
-    if b >= GB {
-        format!("{:.1}GB", b / GB)
-    } else if b >= MB {
-        format!("{:.1}MB", b / MB)
-    } else if b >= KB {
-        format!("{:.1}KB", b / KB)
-    } else {
-        format!("{}B", bytes)
-    }
-}

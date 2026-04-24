@@ -100,14 +100,39 @@ impl Default for GeneralConfig {
     }
 }
 
-fn default_refresh_rate() -> u64 {
-    1000
+/// Generates `fn $name() -> $ty { $value }` — used by `#[serde(default = "...")]`.
+macro_rules! serde_defaults {
+    ($($name:ident -> $ty:ty = $val:expr;)*) => {
+        $(fn $name() -> $ty { $val })*
+    };
 }
-fn default_ui_fps() -> u32 {
-    60
-}
-fn default_alert_duration() -> u64 {
-    5
+
+serde_defaults! {
+    // GeneralConfig
+    default_refresh_rate   -> u64    = 1000;
+    default_ui_fps         -> u32    = 60;
+    default_alert_duration -> u64    = 5;
+    // ColorConfig
+    default_header_bg      -> String = "#1a1b26".into();
+    default_header_fg      -> String = "#c0caf5".into();
+    default_gauge_low      -> String = "#9ece6a".into();
+    default_gauge_mid      -> String = "#e0af68".into();
+    default_gauge_high     -> String = "#f7768e".into();
+    default_gauge_empty    -> String = "#3b4261".into();
+    default_sparkline      -> String = "#7aa2f7".into();
+    default_table_header   -> String = "#bb9af7".into();
+    default_table_row_a    -> String = "#1a1b26".into();
+    default_table_row_b    -> String = "#24283b".into();
+    default_alert_bg       -> String = "#f7768e".into();
+    default_alert_fg       -> String = "#1a1b26".into();
+    default_border         -> String = "#565f89".into();
+    default_accent         -> String = "#7aa2f7".into();
+    default_highlight      -> String = "#283457".into();
+    // NetworkConfig
+    default_public_ip_url         -> String = "https://api.ipify.org".into();
+    default_geoip_url_template    -> String = "http://ip-api.com/json/{ip}?fields=status,country,city".into();
+    default_geoip_cache_size      -> usize  = 128;
+    default_request_timeout_secs  -> u64    = 3;
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -166,52 +191,6 @@ impl Default for ColorConfig {
     }
 }
 
-fn default_header_bg() -> String {
-    "#1a1b26".into()
-}
-fn default_header_fg() -> String {
-    "#c0caf5".into()
-}
-fn default_gauge_low() -> String {
-    "#9ece6a".into()
-}
-fn default_gauge_mid() -> String {
-    "#e0af68".into()
-}
-fn default_gauge_high() -> String {
-    "#f7768e".into()
-}
-fn default_gauge_empty() -> String {
-    "#3b4261".into()
-}
-fn default_sparkline() -> String {
-    "#7aa2f7".into()
-}
-fn default_table_header() -> String {
-    "#bb9af7".into()
-}
-fn default_table_row_a() -> String {
-    "#1a1b26".into()
-}
-fn default_table_row_b() -> String {
-    "#24283b".into()
-}
-fn default_alert_bg() -> String {
-    "#f7768e".into()
-}
-fn default_alert_fg() -> String {
-    "#1a1b26".into()
-}
-fn default_border() -> String {
-    "#565f89".into()
-}
-fn default_accent() -> String {
-    "#7aa2f7".into()
-}
-fn default_highlight() -> String {
-    "#283457".into()
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct PathConfig {
     /// Path to auth log file (Linux/Unix only).
@@ -240,19 +219,6 @@ impl Default for NetworkConfig {
             request_timeout_secs: default_request_timeout_secs(),
         }
     }
-}
-
-fn default_public_ip_url() -> String {
-    "https://api.ipify.org".into()
-}
-fn default_geoip_url_template() -> String {
-    "http://ip-api.com/json/{ip}?fields=status,country,city".into()
-}
-fn default_geoip_cache_size() -> usize {
-    128
-}
-fn default_request_timeout_secs() -> u64 {
-    3
 }
 
 // ---------------------------------------------------------------------------

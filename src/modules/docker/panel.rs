@@ -8,6 +8,7 @@ use ratatui::Frame;
 
 use crate::core::config::AppConfig;
 use crate::core::state::{AppState, DockerAction};
+use crate::shared::fmt::format_bytes;
 
 /// Render the Docker monitoring panel.
 pub fn render(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfig) {
@@ -103,7 +104,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfi
         ])
         .height(1);
 
-        let mut rows: Vec<Row> = Vec::new();
+        let mut rows: Vec<Row> = Vec::with_capacity(state.containers.len());
 
         if state.containers.is_empty() {
             rows.push(
@@ -343,20 +344,3 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1])[1]
 }
 
-/// Format bytes to human-readable string.
-fn format_bytes(bytes: u64) -> String {
-    const KB: f64 = 1024.0;
-    const MB: f64 = KB * 1024.0;
-    const GB: f64 = MB * 1024.0;
-
-    let b = bytes as f64;
-    if b >= GB {
-        format!("{:.1}GB", b / GB)
-    } else if b >= MB {
-        format!("{:.1}MB", b / MB)
-    } else if b >= KB {
-        format!("{:.1}KB", b / KB)
-    } else {
-        format!("{}B", bytes)
-    }
-}

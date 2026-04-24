@@ -153,7 +153,7 @@ pub fn spawn_docker_watcher(store: &Store) {
 }
 
 // ---------------------------------------------------------------------------
-// Tab cycling helper
+// Navigation helpers
 // ---------------------------------------------------------------------------
 
 fn next_tab(current: ActiveTab) -> ActiveTab {
@@ -162,6 +162,28 @@ fn next_tab(current: ActiveTab) -> ActiveTab {
         ActiveTab::Docker => ActiveTab::Processes,
         ActiveTab::Processes => ActiveTab::Settings,
         ActiveTab::Settings => ActiveTab::Dashboard,
+    }
+}
+
+/// Try to switch tab via number key. Returns `Some(tab)` if the key matches.
+fn tab_for_key(key: KeyCode) -> Option<ActiveTab> {
+    match key {
+        KeyCode::Char('1') => Some(ActiveTab::Dashboard),
+        KeyCode::Char('2') => Some(ActiveTab::Docker),
+        KeyCode::Char('3') => Some(ActiveTab::Processes),
+        KeyCode::Char('4') => Some(ActiveTab::Settings),
+        _ => None,
+    }
+}
+
+/// Toggle sort column for the process list. If already sorting by `col`,
+/// flip direction; otherwise switch to `col` with the given default direction.
+fn toggle_process_sort(st: &mut crate::core::state::AppState, col: ProcessSort, default_asc: bool) {
+    if st.processes_sort_by == col {
+        st.processes_sort_asc = !st.processes_sort_asc;
+    } else {
+        st.processes_sort_by = col;
+        st.processes_sort_asc = default_asc;
     }
 }
 
@@ -220,27 +242,9 @@ pub async fn run_event_loop(
                                     st.show_user_history = false;
                                     st.user_history_scroll = 0;
                                 }
-                                KeyCode::Char('1') => {
+                                k if tab_for_key(k).is_some() => {
                                     let mut st = store.write().await;
-                                    st.active_tab = ActiveTab::Dashboard;
-                                    st.show_user_history = false;
-                                    st.user_history_scroll = 0;
-                                }
-                                KeyCode::Char('2') => {
-                                    let mut st = store.write().await;
-                                    st.active_tab = ActiveTab::Docker;
-                                    st.show_user_history = false;
-                                    st.user_history_scroll = 0;
-                                }
-                                KeyCode::Char('3') => {
-                                    let mut st = store.write().await;
-                                    st.active_tab = ActiveTab::Processes;
-                                    st.show_user_history = false;
-                                    st.user_history_scroll = 0;
-                                }
-                                KeyCode::Char('4') => {
-                                    let mut st = store.write().await;
-                                    st.active_tab = ActiveTab::Settings;
+                                    st.active_tab = tab_for_key(k).unwrap();
                                     st.show_user_history = false;
                                     st.user_history_scroll = 0;
                                 }
@@ -281,14 +285,8 @@ pub async fn run_event_loop(
                                 KeyCode::Tab => {
                                     store.write().await.active_tab = next_tab(ActiveTab::Docker);
                                 }
-                                KeyCode::Char('1') => {
-                                    store.write().await.active_tab = ActiveTab::Dashboard;
-                                }
-                                KeyCode::Char('3') => {
-                                    store.write().await.active_tab = ActiveTab::Processes;
-                                }
-                                KeyCode::Char('4') => {
-                                    store.write().await.active_tab = ActiveTab::Settings;
+                                k if tab_for_key(k).is_some() => {
+                                    store.write().await.active_tab = tab_for_key(k).unwrap();
                                 }
                                 KeyCode::Up => {
                                     let mut st = store.write().await;
@@ -309,30 +307,21 @@ pub async fn run_event_loop(
                                         st.show_docker_details = !st.show_docker_details;
                                     }
                                 }
-                                KeyCode::Char('s') => {
+                                // Container lifecycle actions
+                                KeyCode::Char('s') | KeyCode::Char('u') |
+                                KeyCode::Char('r') | KeyCode::Char('k') => {
+                                    let action = match key.code {
+                                        KeyCode::Char('s') => DockerAction::Stop,
+                                        KeyCode::Char('u') => DockerAction::Start,
+                                        KeyCode::Char('r') => DockerAction::Restart,
+                                        _ => DockerAction::Kill,
+                                    };
                                     let mut st = store.write().await;
                                     if let Some(c) = st.containers.get(st.docker_selected) {
-                                        st.docker_action_request = Some((DockerAction::Stop, c.id.clone()));
+                                        st.docker_action_request = Some((action, c.id.clone()));
                                     }
                                 }
-                                KeyCode::Char('u') => {
-                                    let mut st = store.write().await;
-                                    if let Some(c) = st.containers.get(st.docker_selected) {
-                                        st.docker_action_request = Some((DockerAction::Start, c.id.clone()));
-                                    }
-                                }
-                                KeyCode::Char('r') => {
-                                    let mut st = store.write().await;
-                                    if let Some(c) = st.containers.get(st.docker_selected) {
-                                        st.docker_action_request = Some((DockerAction::Restart, c.id.clone()));
-                                    }
-                                }
-                                KeyCode::Char('k') => {
-                                    let mut st = store.write().await;
-                                    if let Some(c) = st.containers.get(st.docker_selected) {
-                                        st.docker_action_request = Some((DockerAction::Kill, c.id.clone()));
-                                    }
-                                }
+                                // Confirmation dialog
                                 KeyCode::Char('y') | KeyCode::Char('Y') => {
                                     let mut st = store.write().await;
                                     if let Some((action, id)) = st.docker_action_request.take() {
@@ -340,8 +329,7 @@ pub async fn run_event_loop(
                                     }
                                 }
                                 KeyCode::Char('n') | KeyCode::Char('N') => {
-                                    let mut st = store.write().await;
-                                    st.docker_action_request = None;
+                                    store.write().await.docker_action_request = None;
                                 }
                                 _ => {}
                             }
@@ -354,14 +342,8 @@ pub async fn run_event_loop(
                                 KeyCode::Tab => {
                                     store.write().await.active_tab = next_tab(ActiveTab::Processes);
                                 }
-                                KeyCode::Char('1') => {
-                                    store.write().await.active_tab = ActiveTab::Dashboard;
-                                }
-                                KeyCode::Char('2') => {
-                                    store.write().await.active_tab = ActiveTab::Docker;
-                                }
-                                KeyCode::Char('4') => {
-                                    store.write().await.active_tab = ActiveTab::Settings;
+                                k if tab_for_key(k).is_some() => {
+                                    store.write().await.active_tab = tab_for_key(k).unwrap();
                                 }
                                 KeyCode::Up => {
                                     let mut st = store.write().await;
@@ -389,42 +371,11 @@ pub async fn run_event_loop(
                                     let mut st = store.write().await;
                                     st.processes_frozen = !st.processes_frozen;
                                 }
-                                KeyCode::Char('p') => {
-                                    let mut st = store.write().await;
-                                    if st.processes_sort_by == ProcessSort::Pid {
-                                        st.processes_sort_asc = !st.processes_sort_asc;
-                                    } else {
-                                        st.processes_sort_by = ProcessSort::Pid;
-                                        st.processes_sort_asc = true;
-                                    }
-                                }
-                                KeyCode::Char('n') => {
-                                    let mut st = store.write().await;
-                                    if st.processes_sort_by == ProcessSort::Name {
-                                        st.processes_sort_asc = !st.processes_sort_asc;
-                                    } else {
-                                        st.processes_sort_by = ProcessSort::Name;
-                                        st.processes_sort_asc = true;
-                                    }
-                                }
-                                KeyCode::Char('c') => {
-                                    let mut st = store.write().await;
-                                    if st.processes_sort_by == ProcessSort::Cpu {
-                                        st.processes_sort_asc = !st.processes_sort_asc;
-                                    } else {
-                                        st.processes_sort_by = ProcessSort::Cpu;
-                                        st.processes_sort_asc = false;
-                                    }
-                                }
-                                KeyCode::Char('m') => {
-                                    let mut st = store.write().await;
-                                    if st.processes_sort_by == ProcessSort::Memory {
-                                        st.processes_sort_asc = !st.processes_sort_asc;
-                                    } else {
-                                        st.processes_sort_by = ProcessSort::Memory;
-                                        st.processes_sort_asc = false;
-                                    }
-                                }
+                                // Sort column toggles
+                                KeyCode::Char('p') => toggle_process_sort(&mut *store.write().await, ProcessSort::Pid, true),
+                                KeyCode::Char('n') => toggle_process_sort(&mut *store.write().await, ProcessSort::Name, true),
+                                KeyCode::Char('c') => toggle_process_sort(&mut *store.write().await, ProcessSort::Cpu, false),
+                                KeyCode::Char('m') => toggle_process_sort(&mut *store.write().await, ProcessSort::Memory, false),
                                 KeyCode::Char('k') => {
                                     let pid = {
                                         let st = store.read().await;
@@ -448,14 +399,8 @@ pub async fn run_event_loop(
                                     KeyCode::Tab => {
                                         store.write().await.active_tab = next_tab(ActiveTab::Settings);
                                     }
-                                    KeyCode::Char('1') => {
-                                        store.write().await.active_tab = ActiveTab::Dashboard;
-                                    }
-                                    KeyCode::Char('2') => {
-                                        store.write().await.active_tab = ActiveTab::Docker;
-                                    }
-                                    KeyCode::Char('3') => {
-                                        store.write().await.active_tab = ActiveTab::Processes;
+                                    k if tab_for_key(k).is_some() => {
+                                        store.write().await.active_tab = tab_for_key(k).unwrap();
                                     }
                                     KeyCode::Up => {
                                         let mut st = store.write().await;

@@ -1,4 +1,4 @@
-//! Provider trait definitions and platform re-exports.
+//! Provider trait definitions for platform-agnostic data gathering.
 //!
 //! The two core traits — `MetricProvider` and `ConnectionProvider` — define
 //! the async interface between background data-gathering tasks and the store.
