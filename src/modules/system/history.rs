@@ -1,4 +1,5 @@
 use std::fs;
+#[allow(unused_imports)]
 use std::path::Path;
 #[allow(unused_imports)]
 use std::path::PathBuf;

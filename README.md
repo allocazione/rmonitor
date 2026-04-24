@@ -8,7 +8,8 @@ rmonitor is a high-performance, cross-platform System, Docker, and Security Moni
 - **Network Stats:** Live tracking of inbound (RX) and outbound (TX) traffic rates across all interfaces.
 - **Docker Monitoring:** Live container table showing name, image, status, CPU%, memory usage, and per-container network I/O. Automatically detects Docker availability.
 - **Cross-Platform Security Monitoring:**
-  - **Linux/OpenBSD/FreeBSD:** Non-blocking tailing and regex-parsing of `/var/log/auth.log`, `/var/log/secure`, or `/var/log/authlog` to capture SSH login/logoff events.
+  - **Linux:** Automatically uses `journalctl` (systemd) or tails `/var/log/auth.log` / `/var/log/secure` to capture SSH login/logoff events.
+  - **OpenBSD/FreeBSD/macOS:** Non-blocking tailing of `/var/log/auth.log`, `/var/log/secure`, or `/var/log/authlog`.
   - **Windows:** Subscribes to the Windows Security Event Log for Event IDs 4624 (Logon) and 4634 (Logoff), capturing RDP and Network logins.
   - **WSL:** Automatically detected and indicated with a `[WSL]` badge in the header.
 - **Smart Analytics:** Automatically looks up remote login IPs against a GeoIP service (with an LRU cache) to map connections to physical locations.
@@ -63,13 +64,14 @@ If you prefer to build manually without installing:
 cargo build --release
 ```
 
-Or use the provided build scripts which output to `release/<os>/`:
+Or use the provided build scripts which output to `release/<os>/` and can install the binary system-wide:
 
 ```bash
 # Windows (PowerShell)
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 
 # Linux / macOS / OpenBSD
+chmod +x build.sh
 ./build.sh
 ```
 
@@ -134,20 +136,28 @@ You can edit all settings **live** from the Settings tab (press `2` or `Tab`). C
 
 ```toml
 [general]
+refresh_rate_ms = 2000
 ui_fps = 60
-refresh_rate_ms = 1000
 alert_duration_secs = 5
 
-[network]
-geoip_url_template = "http://ip-api.com/json/{ip}?fields=status,country,city"
-public_ip_url = "https://api.ipify.org"
-
 [colors]
-header_bg = "#1a1b26"
-header_fg = "#c0caf5"
-gauge_low = "#9ece6a"
-gauge_high = "#f7768e"
-border = "#565f89"
+header_bg    = "#1a1b26"
+header_fg    = "#c0caf5"
+gauge_low    = "#9ece6a"
+gauge_mid    = "#e0af68"
+gauge_high   = "#f7768e"
+sparkline    = "#7aa2f7"
+table_header = "#bb9af7"
+border       = "#565f89"
+
+[network]
+public_ip_url = "https://api.ipify.org"
+geoip_url_template = "http://ip-api.com/json/{ip}?fields=status,country,city"
+geoip_cache_size = 128
+request_timeout_secs = 3
+
+[paths]
+# auth_log = "/var/log/auth.log"
 ```
 
 ---

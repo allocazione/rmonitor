@@ -32,8 +32,9 @@ alert_fg     = "#1a1b26"
 border       = "#565f89"
 
 [paths]
-# Linux only — override auth log location.
-# Uncomment ONE of the following:
+# Linux only — override auth log location. 
+# On systemd systems, journalctl is used automatically.
+# Uncomment ONE of the following to force file tailing:
 # auth_log = "/var/log/auth.log"
 # auth_log = "/var/log/secure"
 
