@@ -68,21 +68,28 @@ impl UnixConnectionProvider {
             if parts.len() < 2 { continue; }
 
             let user = parts[0];
-            let tty = parts[1];
             
+            // Robustly find TTY and IP
+            let mut tty = parts[1].to_string();
             let mut ip = "local".to_string();
-            for part in &parts {
+            
+            for (i, part) in parts.iter().enumerate().skip(1) {
+                // Look for TTY-like strings: pts/X, ttyX, or just something after 'sshd'
+                if part.contains('/') || part.starts_with("tty") || part.starts_with(':') {
+                    tty = part.to_string();
+                }
+                
+                // Look for IP in parentheses
                 if part.starts_with('(') && part.ends_with(')') {
-                    ip = part[1..part.len()-1].to_string();
-                    // Some systems put :0 or other display info in ()
-                    if ip.starts_with(':') {
-                        ip = "local".to_string();
+                    let inner = &part[1..part.len()-1];
+                    if !inner.is_empty() && !inner.starts_with(':') {
+                        ip = inner.to_string();
                     }
-                    break;
                 }
             }
 
-            let sid = format!("unix-{}", tty);
+            // session_id should be as unique as possible to avoid collisions
+            let sid = format!("unix-{}-{}", user, tty);
             let protocol = if ip == "local" { "Console".to_string() } else { "SSH".to_string() };
             let geo = if ip != "local" {
                 self.geo_cache.lookup(&ip).await
@@ -97,7 +104,7 @@ impl UnixConnectionProvider {
                 user: user.into(),
                 source_ip: ip,
                 protocol,
-                login_time: Utc::now(), // Best effort, who doesn't always provide precise seconds
+                login_time: Utc::now(),
                 location: geo.display(),
                 session_id: sid,
             });
@@ -121,7 +128,13 @@ impl UnixConnectionProvider {
 
         // Add or update
         for session in fresh_sessions {
-            if !st.connections.iter().any(|c| c.session_id == session.session_id) {
+            if let Some(existing) = st.connections.iter_mut().find(|c| c.session_id == session.session_id) {
+                // Update everything except login_time to preserve the original session start
+                existing.user = session.user;
+                existing.source_ip = session.source_ip;
+                existing.protocol = session.protocol;
+                existing.location = session.location;
+            } else {
                 st.add_connection(session);
             }
         }
