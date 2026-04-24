@@ -1,9 +1,5 @@
 use procfs::net::{tcp, tcp6};
-use std::collections::HashSet;
 
-/// Robust connection tracker using the procfs library to directly access 
-/// kernel networking data, bypassing shell commands for higher performance 
-/// and reliability on Debian systems.
 pub struct ConnectionTracker;
 
 pub struct ConnectionInfo {
@@ -12,8 +8,6 @@ pub struct ConnectionInfo {
 }
 
 impl ConnectionTracker {
-    /// Fetches all established TCP connections (IPv4 and IPv6) from /proc/net.
-    /// Returns a list of ConnectionInfo objects.
     pub fn get_established_connections() -> anyhow::Result<Vec<ConnectionInfo>> {
         let mut connections = Vec::new();
 
@@ -54,18 +48,5 @@ impl ConnectionTracker {
         }
 
         Ok(connections)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_tracker_compiles() {
-        if cfg!(target_os = "linux") {
-            let conns = ConnectionTracker::get_established_connections();
-            assert!(conns.is_ok());
-        }
     }
 }

@@ -45,6 +45,9 @@ lru = "0.12"
 # Async trait support
 async-trait = "0.1"
 
+# Error handling
+anyhow = "1"
+
 # Directory paths for config
 dirs = "5"
 futures-util = "0.3"
