@@ -40,13 +40,61 @@ impl UnixConnectionProvider {
         }
     }
 
-    async fn process_line(
+    #[cfg(target_os = "linux")]
+    async fn watch_journal(&self, store: &Store) -> Result<(), Box<dyn std::error::Error>> {
+        let re_open = Regex::new(
+            r"sshd\[(\d+)\]:\s+Accepted\s+(\w+)\s+for\s+(\w+)\s+from\s+([\d.]+)"
+        ).unwrap();
+        let re_close = Regex::new(
+            r"sshd\[(\d+)\]:\s+pam_unix\(sshd:session\):\s+session\s+closed\s+for\s+user\s+(\w+)"
+        ).unwrap();
+        let alert_dur = chrono::Duration::seconds(self.alert_dur_secs);
+
+        // 1. Load recent history (last 24h) to catch currently active sessions
+        let history = Command::new("journalctl")
+            .args(&["-o", "short", "--no-hostname", "-t", "sshd", "--since", "24 hours ago"])
+            .output()
+            .await?;
+
+        if history.status.success() {
+            let content = String::from_utf8_lossy(&history.stdout);
+            for line in content.lines() {
+                self.process_line_internal(line, store, &re_open, &re_close, alert_dur, false).await;
+            }
+        }
+
+        // 2. Start following for live updates
+        let mut child = Command::new("journalctl")
+            .args(&["-f", "-o", "short", "--no-hostname", "-t", "sshd", "--since", "now"])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+
+        let stdout = child.stdout.take().ok_or("Failed to capture journalctl stdout")?;
+        let mut reader = BufReader::new(stdout);
+        let mut buf = String::new();
+
+        loop {
+            buf.clear();
+            match reader.read_line(&mut buf).await {
+                Ok(0) => break,
+                Ok(_) => {
+                    self.process_line_internal(&buf, store, &re_open, &re_close, alert_dur, true).await;
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+        Ok(())
+    }
+
+    async fn process_line_internal(
         &self,
         line: &str,
         store: &Store,
         re_open: &Regex,
         re_close: &Regex,
         alert_dur: chrono::Duration,
+        push_alert: bool,
     ) {
         let line = line.trim();
         if let Some(caps) = re_open.captures(line) {
@@ -59,56 +107,22 @@ impl UnixConnectionProvider {
             let geo = self.geo_cache.lookup(ip).await;
             let mut st = store.write().await;
             st.add_connection(ConnectionEntry {
-                user: user.into(),
-                source_ip: ip.into(),
+                user: user.into(), source_ip: ip.into(),
                 protocol: format!("SSH ({})", method),
-                login_time: now,
-                location: geo.display(),
+                login_time: now, location: geo.display(),
                 session_id: sid,
             });
-            st.push_alert(AlertEntry {
-                message: format!("SSH login: {}@{}", user, ip),
-                timestamp: now,
-                expires_at: now + alert_dur,
-            });
+            if push_alert {
+                st.push_alert(AlertEntry {
+                    message: format!("SSH login: {}@{}", user, ip),
+                    timestamp: now, expires_at: now + alert_dur,
+                });
+            }
         }
         if let Some(caps) = re_close.captures(line) {
             let sid = format!("ssh-{}-{}", &caps[1], &caps[2]);
             store.write().await.remove_connection(&sid);
         }
-    }
-
-    #[cfg(target_os = "linux")]
-    async fn watch_journal(&self, store: &Store) -> Result<(), Box<dyn std::error::Error>> {
-        let mut child = Command::new("journalctl")
-            .args(&["-f", "-o", "short", "--no-hostname", "-t", "sshd", "--since", "now"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()?;
-
-        let stdout = child.stdout.take().ok_or("Failed to capture journalctl stdout")?;
-        let mut reader = BufReader::new(stdout);
-        let mut buf = String::new();
-
-        let re_open = Regex::new(
-            r"sshd\[(\d+)\]:\s+Accepted\s+(\w+)\s+for\s+(\w+)\s+from\s+([\d.]+)"
-        ).unwrap();
-        let re_close = Regex::new(
-            r"sshd\[(\d+)\]:\s+pam_unix\(sshd:session\):\s+session\s+closed\s+for\s+user\s+(\w+)"
-        ).unwrap();
-        let alert_dur = chrono::Duration::seconds(self.alert_dur_secs);
-
-        loop {
-            buf.clear();
-            match reader.read_line(&mut buf).await {
-                Ok(0) => break, // Process exited or pipe closed
-                Ok(_) => {
-                    self.process_line(&buf, store, &re_open, &re_close, alert_dur).await;
-                }
-                Err(e) => return Err(e.into()),
-            }
-        }
-        Ok(())
     }
 
     async fn watch_files(&self, store: &Store) {
@@ -127,11 +141,6 @@ impl UnixConnectionProvider {
             }
         };
 
-        let mut file = file;
-        let _ = file.seek(std::io::SeekFrom::End(0)).await;
-        let mut reader = BufReader::new(file);
-        let mut buf = String::new();
-
         let re_open = Regex::new(
             r"sshd\[(\d+)\]:\s+Accepted\s+(\w+)\s+for\s+(\w+)\s+from\s+([\d.]+)"
         ).unwrap();
@@ -140,6 +149,17 @@ impl UnixConnectionProvider {
         ).unwrap();
         let alert_dur = chrono::Duration::seconds(self.alert_dur_secs);
 
+        // 1. Read history from the file first
+        let mut reader = BufReader::new(file);
+        let mut buf = String::new();
+        
+        while let Ok(n) = reader.read_line(&mut buf).await {
+            if n == 0 { break; }
+            self.process_line_internal(&buf, store, &re_open, &re_close, alert_dur, false).await;
+            buf.clear();
+        }
+
+        // 2. Continue tailing for live updates
         loop {
             buf.clear();
             match reader.read_line(&mut buf).await {
@@ -147,7 +167,7 @@ impl UnixConnectionProvider {
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
                 Ok(_) => {
-                    self.process_line(&buf, store, &re_open, &re_close, alert_dur).await;
+                    self.process_line_internal(&buf, store, &re_open, &re_close, alert_dur, true).await;
                 }
                 Err(_) => {
                     tokio::time::sleep(Duration::from_secs(5)).await;
