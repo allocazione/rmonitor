@@ -128,7 +128,7 @@ impl UnixConnectionProvider {
     }
 
     #[cfg(target_os = "linux")]
-    async fn watch_journal(&self, store: &Store) -> Result<(), Box<dyn std::error::Error>> {
+    async fn watch_journal(&self, store: &Store) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let re_open = Regex::new(
             r"sshd\[(\d+)\]:\s+Accepted\s+(\w+)\s+for\s+(\w+)\s+from\s+([\d.:a-fA-F]+)"
         ).unwrap();
@@ -358,8 +358,16 @@ impl ConnectionProvider for UnixConnectionProvider {
         #[cfg(target_os = "linux")]
         {
             // Try journalctl first on Linux
-            if let Err(e) = self.watch_journal(store).await {
-                eprintln!("journalctl watcher failed or not available: {}. Falling back to file tailing.", e);
+            let mut failed = false;
+            match self.watch_journal(store).await {
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!("journalctl watcher failed or not available: {}. Falling back to file tailing.", e);
+                    failed = true;
+                }
+            }
+            
+            if failed {
                 // On failure, fall through to watch_files
                 self.watch_files(store).await;
             }
