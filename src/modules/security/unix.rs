@@ -16,6 +16,7 @@ use crate::modules::network::provider::GeoIpCache;
 use crate::providers::ConnectionProvider;
 use crate::core::state::{AlertEntry, ConnectionEntry};
 use crate::core::store::Store;
+use crate::modules::security::connection_tracker::ConnectionTracker;
 
 use std::sync::Arc;
 
@@ -109,126 +110,35 @@ impl UnixConnectionProvider {
         entries
     }
 
-    fn parse_host_port(value: &str) -> Option<(String, String)> {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            return None;
-        }
-
-        if let Some(stripped) = trimmed.strip_prefix('[') {
-            let end = stripped.find(']')?;
-            let host = &stripped[..end];
-            let after = &stripped[end + 1..];
-            let port = after.strip_prefix(':')?;
-            if host.is_empty() || port.is_empty() {
-                return None;
-            }
-            return Some((host.to_string(), port.to_string()));
-        }
-
-        let (host, port) = trimmed.rsplit_once(':')?;
-        if host.is_empty() || port.is_empty() {
-            return None;
-        }
-        Some((host.to_string(), port.to_string()))
-    }
-
-    fn protocol_from_local_port(local_port: &str) -> Option<String> {
-        match local_port {
-            "22" => Some("SSH (socket)".to_string()),
-            "3389" => Some("RDP (socket)".to_string()),
-            _ => None,
-        }
-    }
-
-    fn parse_established_line(line: &str) -> Option<(String, String)> {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 5 {
-            return None;
-        }
-
-        // ss -Htn output columns:
-        // Recv-Q Send-Q LocalAddress:Port PeerAddress:Port
-        // netstat -tn output columns:
-        // tcp 0 0 LocalAddress:Port PeerAddress:Port ESTABLISHED
-        let (local, peer) = if parts[0].starts_with("tcp") {
-            if parts.len() < 6 {
-                return None;
-            }
-            (parts[3], parts[4])
-        } else {
-            (parts[3], parts[4])
-        };
-
-        let (_, local_port) = Self::parse_host_port(local)?;
-        let (peer_ip, _peer_port) = Self::parse_host_port(peer)?;
-        let protocol = Self::protocol_from_local_port(&local_port)?;
-
-        // Ignore local/unspecified peers.
-        if peer_ip == "*" || peer_ip == "0.0.0.0" || peer_ip == "::" {
-            return None;
-        }
-        if peer_ip == "127.0.0.1" || peer_ip == "::1" || peer_ip.starts_with("::ffff:127.") {
-            return None;
-        }
-
-        Some((peer_ip, protocol))
-    }
-
     async fn fetch_established_network_hosts(
         &self,
         existing_ips: &HashSet<String>,
     ) -> Vec<ConnectionEntry> {
-        let output = match Command::new("ss")
-            .args(["-Htn", "state", "established"])
-            .env("LANG", "C")
-            .output()
-            .await
-        {
-            Ok(o) => o,
-            Err(_) => {
-                // Debian fallback when iproute2/ss is unavailable.
-                match Command::new("netstat")
-                    .args(["-tn"])
-                    .env("LANG", "C")
-                    .output()
-                    .await
-                {
-                    Ok(o) => o,
-                    Err(_) => return Vec::new(),
-                }
-            }
+        let mut network_entries = Vec::new();
+
+        // Use the ConnectionTracker (procfs adapter) for reliable, 
+        // high-performance connection tracking on Debian.
+        let connections = match ConnectionTracker::get_established_connections() {
+            Ok(c) => c,
+            Err(_) => return Vec::new(),
         };
 
-        if !output.status.success() {
-            return Vec::new();
-        }
-
-        let content = String::from_utf8_lossy(&output.stdout);
-        let mut seen_hosts: HashSet<String> = HashSet::new();
-        let mut entries = Vec::new();
-
-        for line in content.lines() {
-            let (peer_ip, protocol) = match Self::parse_established_line(line) {
-                Some(v) => v,
-                None => continue,
-            };
-            if existing_ips.contains(&peer_ip) || !seen_hosts.insert(peer_ip.clone()) {
-                continue;
+        for conn in connections {
+            // Only add if not already present from session sources
+            if !existing_ips.contains(&conn.remote_ip) {
+                let geo = self.geo_cache.lookup(&conn.remote_ip).await;
+                network_entries.push(ConnectionEntry {
+                    user: "unknown (socket)".into(),
+                    source_ip: conn.remote_ip,
+                    protocol: conn.protocol,
+                    login_time: Utc::now(),
+                    location: geo.display(),
+                    session_id: format!("socket-{}", conn.remote_ip),
+                });
             }
-
-            let geo = self.geo_cache.lookup(&peer_ip).await;
-            entries.push(ConnectionEntry {
-                user: "(network)".into(),
-                source_ip: peer_ip.clone(),
-                protocol,
-                login_time: Utc::now(),
-                location: geo.display(),
-                session_id: format!("net-host-{}", peer_ip),
-            });
         }
 
-        entries
+        network_entries
     }
 
     async fn sync_sessions(&self, store: &Store) {

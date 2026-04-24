@@ -6,5 +6,6 @@
 
 pub mod unix;
 pub mod windows;
+pub mod connection_tracker;
 pub mod panel;
 pub mod alerts;
