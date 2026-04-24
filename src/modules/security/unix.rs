@@ -133,6 +133,48 @@ impl UnixConnectionProvider {
         Some((host.to_string(), port.to_string()))
     }
 
+    fn protocol_from_local_port(local_port: &str) -> Option<String> {
+        match local_port {
+            "22" => Some("SSH (socket)".to_string()),
+            "3389" => Some("RDP (socket)".to_string()),
+            _ => None,
+        }
+    }
+
+    fn parse_established_line(line: &str) -> Option<(String, String)> {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 5 {
+            return None;
+        }
+
+        // ss -Htn output columns:
+        // Recv-Q Send-Q LocalAddress:Port PeerAddress:Port
+        // netstat -tn output columns:
+        // tcp 0 0 LocalAddress:Port PeerAddress:Port ESTABLISHED
+        let (local, peer) = if parts[0].starts_with("tcp") {
+            if parts.len() < 6 {
+                return None;
+            }
+            (parts[3], parts[4])
+        } else {
+            (parts[3], parts[4])
+        };
+
+        let (_, local_port) = Self::parse_host_port(local)?;
+        let (peer_ip, _peer_port) = Self::parse_host_port(peer)?;
+        let protocol = Self::protocol_from_local_port(&local_port)?;
+
+        // Ignore local/unspecified peers.
+        if peer_ip == "*" || peer_ip == "0.0.0.0" || peer_ip == "::" {
+            return None;
+        }
+        if peer_ip == "127.0.0.1" || peer_ip == "::1" || peer_ip.starts_with("::ffff:127.") {
+            return None;
+        }
+
+        Some((peer_ip, protocol))
+    }
+
     async fn fetch_established_network_hosts(
         &self,
         existing_ips: &HashSet<String>,
@@ -144,7 +186,18 @@ impl UnixConnectionProvider {
             .await
         {
             Ok(o) => o,
-            Err(_) => return Vec::new(),
+            Err(_) => {
+                // Debian fallback when iproute2/ss is unavailable.
+                match Command::new("netstat")
+                    .args(["-tn"])
+                    .env("LANG", "C")
+                    .output()
+                    .await
+                {
+                    Ok(o) => o,
+                    Err(_) => return Vec::new(),
+                }
+            }
         };
 
         if !output.status.success() {
@@ -156,39 +209,10 @@ impl UnixConnectionProvider {
         let mut entries = Vec::new();
 
         for line in content.lines() {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() < 5 {
-                continue;
-            }
-
-            // ss -Htn output columns:
-            // Recv-Q Send-Q LocalAddress:Port PeerAddress:Port
-            let local = parts[3];
-            let peer = parts[4];
-
-            let (_, local_port) = match Self::parse_host_port(local) {
+            let (peer_ip, protocol) = match Self::parse_established_line(line) {
                 Some(v) => v,
                 None => continue,
             };
-            let (peer_ip, _peer_port) = match Self::parse_host_port(peer) {
-                Some(v) => v,
-                None => continue,
-            };
-
-            // Track remote admin sessions by local service port.
-            let protocol = match local_port.as_str() {
-                "22" => "SSH (socket)".to_string(),
-                "3389" => "RDP (socket)".to_string(),
-                _ => continue,
-            };
-
-            // Ignore local/unspecified addresses and avoid duplicate rows.
-            if peer_ip == "*" || peer_ip == "0.0.0.0" || peer_ip == "::" {
-                continue;
-            }
-            if peer_ip == "127.0.0.1" || peer_ip == "::1" || peer_ip.starts_with("::ffff:127.") {
-                continue;
-            }
             if existing_ips.contains(&peer_ip) || !seen_hosts.insert(peer_ip.clone()) {
                 continue;
             }
@@ -209,12 +233,17 @@ impl UnixConnectionProvider {
 
     async fn sync_sessions(&self, store: &Store) {
         let mut fresh_sessions = self.fetch_who_sessions().await;
+        let who_remote_count = fresh_sessions
+            .iter()
+            .filter(|s| s.source_ip != "local")
+            .count();
         let existing_ips: HashSet<String> = fresh_sessions
             .iter()
             .filter(|s| s.source_ip != "local")
             .map(|s| s.source_ip.clone())
             .collect();
         let mut network_hosts = self.fetch_established_network_hosts(&existing_ips).await;
+        let socket_host_count = network_hosts.len();
         fresh_sessions.append(&mut network_hosts);
         let mut st = store.write().await;
         
@@ -238,6 +267,18 @@ impl UnixConnectionProvider {
                 existing.location = session.location;
             } else {
                 st.add_connection(session);
+            }
+        }
+
+        // Monitoring guardrail: detect when login/session sources under-report
+        // compared to socket-level evidence, then keep one persistent warning.
+        if socket_host_count > who_remote_count {
+            let msg = format!(
+                "Connection source mismatch detected: who/journal reports {} remote sessions but socket scan found {}. Using socket fallback.",
+                who_remote_count, socket_host_count
+            );
+            if !st.permission_warnings.contains(&msg) {
+                st.permission_warnings.push(msg);
             }
         }
     }
@@ -464,6 +505,44 @@ impl UnixConnectionProvider {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::UnixConnectionProvider;
+
+    #[test]
+    fn parse_host_port_ipv4() {
+        let parsed = UnixConnectionProvider::parse_host_port("192.168.1.10:22");
+        assert_eq!(parsed, Some(("192.168.1.10".to_string(), "22".to_string())));
+    }
+
+    #[test]
+    fn parse_host_port_ipv6() {
+        let parsed = UnixConnectionProvider::parse_host_port("[2001:db8::1]:3389");
+        assert_eq!(parsed, Some(("2001:db8::1".to_string(), "3389".to_string())));
+    }
+
+    #[test]
+    fn parse_established_line_ss_and_netstat() {
+        let ss_line = "0 0 10.0.0.5:22 10.0.0.21:54122";
+        let netstat_line = "tcp 0 0 10.0.0.5:22 10.0.0.22:54720 ESTABLISHED";
+
+        let a = UnixConnectionProvider::parse_established_line(ss_line);
+        let b = UnixConnectionProvider::parse_established_line(netstat_line);
+
+        assert_eq!(a, Some(("10.0.0.21".to_string(), "SSH (socket)".to_string())));
+        assert_eq!(b, Some(("10.0.0.22".to_string(), "SSH (socket)".to_string())));
+    }
+
+    #[test]
+    fn parse_established_line_ignores_loopback_and_unknown_ports() {
+        let loopback = "0 0 127.0.0.1:22 127.0.0.1:55555";
+        let unknown = "0 0 10.0.0.5:8443 10.0.0.9:55211";
+
+        assert_eq!(UnixConnectionProvider::parse_established_line(loopback), None);
+        assert_eq!(UnixConnectionProvider::parse_established_line(unknown), None);
     }
 }
 
