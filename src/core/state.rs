@@ -470,16 +470,6 @@ impl AppState {
 
         let settings = SettingsState::from_config(config);
 
-        let current_user = std::env::var("USER").or_else(|_| std::env::var("USERNAME")).unwrap_or_else(|_| "Local Console".into());
-        let local_conn = ConnectionEntry {
-            user: current_user,
-            source_ip: "localhost".into(),
-            protocol: "Console".into(),
-            login_time: chrono::Utc::now(),
-            location: "Local".into(),
-            session_id: "local_console_session".into(),
-        };
-
         Self {
             hostname,
             os_name,
@@ -498,7 +488,7 @@ impl AppState {
             net_tx: 0,
             net_total_rx: 0,
             net_total_tx: 0,
-            connections: vec![local_conn],
+            connections: Vec::new(),
             alerts: VecDeque::with_capacity(ALERT_QUEUE_CAP),
             permission_warnings: Vec::new(),
             docker_available: false,

@@ -66,62 +66,66 @@ impl ConnectionProvider for WindowsConnectionProvider {
             }
         });
 
-        let alert_dur = chrono::Duration::seconds(self.alert_dur_secs);
-
         // Process events from the channel
         while let Some(evt) = rx.recv().await {
-            match evt {
-                WinEvent::Logon {
-                    user,
-                    source_ip,
-                    logon_type,
-                    logon_id,
-                } => {
-                    let protocol = match logon_type {
-                        10 => "RDP".to_string(),
-                        3 => "Network".to_string(),
-                        2 => "Console".to_string(),
-                        _ => format!("Type {}", logon_type),
-                    };
+            let store_clone = store.clone();
+            let geo_cache_clone = Arc::clone(&self.geo_cache);
+            let alert_dur = chrono::Duration::seconds(self.alert_dur_secs);
 
-                    let ip_display = if source_ip.is_empty() || source_ip == "-" {
-                        "local".to_string()
-                    } else {
-                        source_ip.clone()
-                    };
+            tokio::spawn(async move {
+                match evt {
+                    WinEvent::Logon {
+                        user,
+                        source_ip,
+                        logon_type,
+                        logon_id,
+                    } => {
+                        let protocol = match logon_type {
+                            10 => "RDP".to_string(),
+                            3 => "Network".to_string(),
+                            2 => "Console".to_string(),
+                            _ => format!("Type {}", logon_type),
+                        };
 
-                    let geo = if ip_display != "local" {
-                        self.geo_cache.lookup(&ip_display).await
-                    } else {
-                        crate::modules::network::provider::GeoInfo {
-                            country: "Local".into(),
-                            city: String::new(),
-                        }
-                    };
+                        let ip_display = if source_ip.is_empty() || source_ip == "-" {
+                            "local".to_string()
+                        } else {
+                            source_ip.clone()
+                        };
 
-                    let now = Utc::now();
-                    let conn = ConnectionEntry {
-                        user: user.clone(),
-                        source_ip: ip_display.clone(),
-                        protocol,
-                        login_time: now,
-                        location: geo.display(),
-                        session_id: logon_id,
-                    };
-                    let alert = AlertEntry {
-                        message: format!("Login: {} from {}", user, ip_display),
-                        timestamp: now,
-                        expires_at: now + alert_dur,
-                    };
+                        let geo = if ip_display != "local" {
+                            geo_cache_clone.lookup(&ip_display).await
+                        } else {
+                            crate::modules::network::provider::GeoInfo {
+                                country: "Local".into(),
+                                city: String::new(),
+                            }
+                        };
 
-                    let mut state = store.write().await;
-                    state.add_connection(conn);
-                    state.push_alert(alert);
+                        let now = Utc::now();
+                        let conn = ConnectionEntry {
+                            user: user.clone(),
+                            source_ip: ip_display.clone(),
+                            protocol,
+                            login_time: now,
+                            location: geo.display(),
+                            session_id: logon_id,
+                        };
+                        let alert = AlertEntry {
+                            message: format!("Login: {} from {}", user, ip_display),
+                            timestamp: now,
+                            expires_at: now + alert_dur,
+                        };
+
+                        let mut state = store_clone.write().await;
+                        state.add_connection(conn);
+                        state.push_alert(alert);
+                    }
+                    WinEvent::Logoff { logon_id } => {
+                        store_clone.write().await.remove_connection(&logon_id);
+                    }
                 }
-                WinEvent::Logoff { logon_id } => {
-                    store.write().await.remove_connection(&logon_id);
-                }
-            }
+            });
         }
     }
 }
@@ -139,9 +143,93 @@ fn subscribe_security_events(
     use windows::Win32::System::Threading::{
         CreateEventW, ResetEvent, WaitForSingleObject, INFINITE,
     };
+        use windows::Win32::System::RemoteDesktop::{
+        WTSEnumerateSessionsW, WTSQuerySessionInformationW, WTSFreeMemory,
+        WTS_CURRENT_SERVER_HANDLE, WTS_SESSION_INFOW, WTSUserName, WTSClientAddress,
+        WTS_CLIENT_ADDRESS, WTSActive, WTSConnected, WTSDisconnected,
+    };
+    use std::net::{Ipv4Addr, Ipv6Addr};
 
     unsafe {
-        // Create a Win32 event for signaling
+        // 1. Fetch currently active sessions first
+        let mut session_info: *mut WTS_SESSION_INFOW = std::ptr::null_mut();
+        let mut count: u32 = 0;
+        if WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &mut session_info, &mut count).is_ok() {
+            let sessions = std::slice::from_raw_parts(session_info, count as usize);
+            for session in sessions {
+                // We want to capture Active, Connected, and Disconnected (user logged in but disconnected)
+                if session.State == WTSActive || session.State == WTSConnected || session.State == WTSDisconnected {
+                    let mut buffer: *mut u16 = std::ptr::null_mut();
+                    let mut bytes_returned: u32 = 0;
+
+                    // Get Username
+                    let mut user = String::from("Unknown");
+                    if WTSQuerySessionInformationW(
+                        WTS_CURRENT_SERVER_HANDLE,
+                        session.SessionId,
+                        WTSUserName,
+                        &mut buffer as *mut _ as *mut _,
+                        &mut bytes_returned,
+                    ).is_ok() {
+                        if !buffer.is_null() && bytes_returned > 2 {
+                            user = String::from_utf16_lossy(std::slice::from_raw_parts(buffer, (bytes_returned / 2).saturating_sub(1) as usize));
+                        }
+                        let _ = WTSFreeMemory(buffer as *mut _);
+                    }
+
+                    if user.is_empty() || user == "SYSTEM" || user.ends_with('$') {
+                        continue;
+                    }
+
+                    // Get IP Address
+                    let mut ip = String::from("local");
+                    if WTSQuerySessionInformationW(
+                        WTS_CURRENT_SERVER_HANDLE,
+                        session.SessionId,
+                        WTSClientAddress,
+                        &mut buffer as *mut _ as *mut _,
+                        &mut bytes_returned,
+                    ).is_ok() {
+                        if !buffer.is_null() && bytes_returned >= std::mem::size_of::<WTS_CLIENT_ADDRESS>() as u32 {
+                            let addr_ptr = buffer as *const WTS_CLIENT_ADDRESS;
+                            let addr = &*addr_ptr;
+                            // AF_INET = 2, AF_INET6 = 23
+                            if addr.AddressFamily == 2 {
+                                let ip_bytes = &addr.Address[2..6];
+                                ip = Ipv4Addr::new(ip_bytes[0], ip_bytes[1], ip_bytes[2], ip_bytes[3]).to_string();
+                            } else if addr.AddressFamily == 23 {
+                                let ip_bytes = &addr.Address[2..18];
+                                let mut arr = [0u8; 16];
+                                arr.copy_from_slice(ip_bytes);
+                                ip = Ipv6Addr::from(arr).to_string();
+                            }
+                        }
+                        let _ = WTSFreeMemory(buffer as *mut _);
+                    }
+
+                    let logon_id = format!("wts-{}", session.SessionId);
+                    let protocol = if ip == "local" { "Console".to_string() } else { "RDP".to_string() };
+
+                    let _ = tx.send(WinEvent::Logon {
+                        user,
+                        source_ip: ip,
+                        logon_type: if protocol == "Console" { 2 } else { 10 },
+                        logon_id,
+                    });
+                }
+            }
+            let _ = WTSFreeMemory(session_info as *mut _);
+        } else {
+            // Report WTS enumeration failure
+            let _ = tx.send(WinEvent::Logon {
+                user: "⚠ WTS Enumeration Failed".to_string(),
+                source_ip: "Check Permissions".to_string(),
+                logon_type: 0,
+                logon_id: "wts-error".to_string(),
+            });
+        }
+
+        // 2. Create a Win32 event for signaling future updates
         let signal: HANDLE = CreateEventW(None, true, false, None)?;
         if signal.is_invalid() {
             return Err("Failed to create signal event".into());
