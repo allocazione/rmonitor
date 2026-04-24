@@ -1,4 +1,6 @@
 use std::fs;
+use std::path::Path;
+#[allow(unused_imports)]
 use std::path::PathBuf;
 use crate::core::state::UserCommandInfo;
 use crate::core::store::Store;
@@ -108,7 +110,7 @@ fn get_linux_user_history(username: String, home_dir: &str) -> Option<UserComman
 }
 
 #[cfg(target_os = "windows")]
-fn get_windows_user_history(username: String, home_path: &PathBuf) -> Option<UserCommandInfo> {
+fn get_windows_user_history(username: String, home_path: &Path) -> Option<UserCommandInfo> {
     let ps_history_path = home_path.join("AppData\\Roaming\\Microsoft\\Windows\\PowerShell\\PSReadLine\\ConsoleHost_history.txt");
     
     if let Ok(content) = fs::read_to_string(&ps_history_path) {

@@ -31,7 +31,6 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfi
         .constraints([
             Constraint::Length(3), // header (standardized)
             Constraint::Min(5),    // fields list
-            Constraint::Length(1), // help bar (standardized)
         ])
         .split(area);
 
@@ -162,23 +161,4 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfi
             Scrollbar::new(ScrollbarOrientation::VerticalRight).style(Style::default().fg(border));
         frame.render_stateful_widget(scrollbar, list_area, &mut scrollbar_state);
     }
-
-    // ── Help bar ────────────────────────────────────────────────────────
-    let help_area = chunks[2];
-    let help_text = Line::from(vec![
-        Span::styled(" ↑↓ ", Style::default().fg(accent)),
-        Span::styled("Select ", Style::default().fg(fg)),
-        Span::styled(" Enter ", Style::default().fg(accent)),
-        Span::styled("Edit ", Style::default().fg(fg)),
-        Span::styled(" 1-4 ", Style::default().fg(accent)),
-        Span::styled("Tabs ", Style::default().fg(fg)),
-        Span::styled(" Esc ", Style::default().fg(accent)),
-        Span::styled("Back ", Style::default().fg(fg)),
-        Span::styled(" q ", Style::default().fg(accent)),
-        Span::styled("Quit ", Style::default().fg(fg)),
-    ]);
-    
-    let help_paragraph = Paragraph::new(help_text)
-        .style(Style::default().bg(bg));
-    frame.render_widget(help_paragraph, help_area);
 }

@@ -29,12 +29,26 @@ pub fn draw(frame: &mut Frame, state: &AppState, config: &AppConfig) {
         return;
     }
 
+    // Split area into main content and status bar
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ])
+        .split(area);
+
+    let main_area = layout[0];
+    let status_area = layout[1];
+
     match state.active_tab {
-        ActiveTab::Dashboard => draw_dashboard(frame, area, state, config),
-        ActiveTab::Docker => docker_panel::render(frame, area, state, config),
-        ActiveTab::Processes => processes::render(frame, area, state, config),
-        ActiveTab::Settings => settings_panel::render(frame, area, state, config),
+        ActiveTab::Dashboard => draw_dashboard(frame, main_area, state, config),
+        ActiveTab::Docker => docker_panel::render(frame, main_area, state, config),
+        ActiveTab::Processes => processes::render(frame, main_area, state, config),
+        ActiveTab::Settings => settings_panel::render(frame, main_area, state, config),
     }
+
+    render_status_bar(frame, status_area, state, config);
 }
 
 /// Render the dashboard (main monitoring view).
@@ -48,14 +62,12 @@ fn draw_dashboard(frame: &mut Frame, area: Rect, state: &AppState, config: &AppC
             Constraint::Length(5),                            // Memory
             Constraint::Min(6),                               // Security
             Constraint::Min(6),                               // History
-            Constraint::Length(1),                            // status / help bar
         ]
     } else {
         vec![
             Constraint::Length(3),                            // header
             Constraint::Length(calc_cpu_panel_height(state)), // CPU + memory
             Constraint::Min(6),                               // security + history
-            Constraint::Length(1),                            // status / help bar
         ]
     };
 
@@ -71,7 +83,6 @@ fn draw_dashboard(frame: &mut Frame, area: Rect, state: &AppState, config: &AppC
         memory::render(frame, main_chunks[2], state, config);
         security_panel::render(frame, main_chunks[3], state, config);
         history_panel::render(frame, main_chunks[4], state, config);
-        render_status_bar(frame, main_chunks[5], state, config);
     } else {
         let metrics_chunks = Layout::default()
             .direction(Direction::Horizontal)
@@ -88,8 +99,6 @@ fn draw_dashboard(frame: &mut Frame, area: Rect, state: &AppState, config: &AppC
 
         security_panel::render(frame, bottom_chunks[0], state, config);
         history_panel::render(frame, bottom_chunks[1], state, config);
-
-        render_status_bar(frame, main_chunks[3], state, config);
     }
 
     alert_toast::render(frame, area, state, config);
@@ -103,7 +112,7 @@ fn calc_cpu_panel_height(state: &AppState) -> u16 {
 }
 
 /// Render a minimal help/status bar at the bottom with tab indicators.
-fn render_status_bar(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfig) {
+pub fn render_status_bar(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfig) {
     let colors = config.get_colors();
     let border_color = colors.border;
     let accent = colors.accent;
@@ -117,25 +126,65 @@ fn render_status_bar(frame: &mut Frame, area: Rect, state: &AppState, config: &A
         }
     };
 
-    let tab_fg = |tab: ActiveTab| -> Style {
-        if state.active_tab == tab {
-            Style::default().fg(fg)
-        } else {
-            Style::default().fg(border_color)
-        }
-    };
-
-    let spans = vec![
-        Span::styled(" Dashboard (1) ", tab_style(ActiveTab::Dashboard)),
-        Span::styled(" Docker (2) ", tab_style(ActiveTab::Docker)),
-        Span::styled(" Processes (3) ", tab_style(ActiveTab::Processes)),
-        Span::styled(" Settings (4) ", tab_style(ActiveTab::Settings)),
-        Span::styled("  │  ", Style::default().fg(border_color)),
-        Span::styled(" ↑↓ Nav ", Style::default().fg(fg)),
-        Span::styled(" Enter History ", Style::default().fg(fg)),
-        Span::styled("  │  ", Style::default().fg(border_color)),
-        Span::styled(" Quit (q/Esc) ", tab_fg(ActiveTab::Dashboard)),
+    let mut spans = vec![
+        Span::styled("Dashboard (1)  ", tab_style(ActiveTab::Dashboard)),
+        Span::styled("Docker (2)  ", tab_style(ActiveTab::Docker)),
+        Span::styled("Processes (3)  ", tab_style(ActiveTab::Processes)),
+        Span::styled("Settings (4)  ", tab_style(ActiveTab::Settings)),
     ];
+
+    // Add help binds after the tabs
+    spans.push(Span::styled("| ", Style::default().fg(border_color)));
+
+    match state.active_tab {
+        ActiveTab::Dashboard => {
+            spans.extend(vec![
+                Span::styled("↑↓ Nav ", Style::default().fg(fg)),
+                Span::styled("| ", Style::default().fg(border_color)),
+                Span::styled("Enter History ", Style::default().fg(fg)),
+            ]);
+        }
+        ActiveTab::Docker => {
+            spans.extend(vec![
+                Span::styled("↑↓ Nav ", Style::default().fg(fg)),
+                Span::styled("| ", Style::default().fg(border_color)),
+                Span::styled("Enter Details ", Style::default().fg(fg)),
+                Span::styled("| ", Style::default().fg(border_color)),
+                Span::styled("s Stop ", Style::default().fg(fg)),
+                Span::styled("| ", Style::default().fg(border_color)),
+                Span::styled("u Start ", Style::default().fg(fg)),
+                Span::styled("| ", Style::default().fg(border_color)),
+                Span::styled("r Restart ", Style::default().fg(fg)),
+                Span::styled("| ", Style::default().fg(border_color)),
+                Span::styled("k Kill ", Style::default().fg(fg)),
+            ]);
+        }
+        ActiveTab::Processes => {
+            spans.extend(vec![
+                Span::styled("↑↓ Nav ", Style::default().fg(fg)),
+                Span::styled("| ", Style::default().fg(border_color)),
+                Span::styled("f Freeze ", Style::default().fg(fg)),
+                Span::styled("| ", Style::default().fg(border_color)),
+                Span::styled("k Kill ", Style::default().fg(fg)),
+                Span::styled("| ", Style::default().fg(border_color)),
+                Span::styled("p,n,c,m Sort ", Style::default().fg(fg)),
+            ]);
+        }
+        ActiveTab::Settings => {
+            spans.extend(vec![
+                Span::styled("↑↓ Select ", Style::default().fg(fg)),
+                Span::styled("| ", Style::default().fg(border_color)),
+                Span::styled("Enter Edit ", Style::default().fg(fg)),
+                Span::styled("| ", Style::default().fg(border_color)),
+                Span::styled("Esc Back ", Style::default().fg(fg)),
+            ]);
+        }
+    }
+
+    spans.extend(vec![
+        Span::styled("| ", Style::default().fg(border_color)),
+        Span::styled("Quit (q/Esc) ", Style::default().fg(fg)),
+    ]);
 
     let paragraph = Paragraph::new(Line::from(spans));
     frame.render_widget(paragraph, area);

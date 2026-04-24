@@ -12,7 +12,7 @@ use crate::modules::system::metrics::SysInfoMetrics;
 use crate::modules::network::provider::{fetch_public_ip, GeoIpCache};
 use crate::modules::system::history::watch_user_history;
 use crate::providers::MetricProvider;
-use crate::core::state::{ActiveTab, AlertEntry};
+use crate::core::state::{ActiveTab, AlertEntry, DockerAction, ProcessSort};
 use crate::core::store::Store;
 use crate::ui;
 
@@ -303,6 +303,46 @@ pub async fn run_event_loop(
                                         st.docker_selected += 1;
                                     }
                                 }
+                                KeyCode::Enter => {
+                                    let mut st = store.write().await;
+                                    if !st.containers.is_empty() {
+                                        st.show_docker_details = !st.show_docker_details;
+                                    }
+                                }
+                                KeyCode::Char('s') => {
+                                    let mut st = store.write().await;
+                                    if let Some(c) = st.containers.get(st.docker_selected) {
+                                        st.docker_action_request = Some((DockerAction::Stop, c.id.clone()));
+                                    }
+                                }
+                                KeyCode::Char('u') => {
+                                    let mut st = store.write().await;
+                                    if let Some(c) = st.containers.get(st.docker_selected) {
+                                        st.docker_action_request = Some((DockerAction::Start, c.id.clone()));
+                                    }
+                                }
+                                KeyCode::Char('r') => {
+                                    let mut st = store.write().await;
+                                    if let Some(c) = st.containers.get(st.docker_selected) {
+                                        st.docker_action_request = Some((DockerAction::Restart, c.id.clone()));
+                                    }
+                                }
+                                KeyCode::Char('k') => {
+                                    let mut st = store.write().await;
+                                    if let Some(c) = st.containers.get(st.docker_selected) {
+                                        st.docker_action_request = Some((DockerAction::Kill, c.id.clone()));
+                                    }
+                                }
+                                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                    let mut st = store.write().await;
+                                    if let Some((action, id)) = st.docker_action_request.take() {
+                                        st.docker_action_confirmed = Some((action, id));
+                                    }
+                                }
+                                KeyCode::Char('n') | KeyCode::Char('N') => {
+                                    let mut st = store.write().await;
+                                    st.docker_action_request = None;
+                                }
                                 _ => {}
                             }
                         }
@@ -348,6 +388,42 @@ pub async fn run_event_loop(
                                 KeyCode::Char('f') => {
                                     let mut st = store.write().await;
                                     st.processes_frozen = !st.processes_frozen;
+                                }
+                                KeyCode::Char('p') => {
+                                    let mut st = store.write().await;
+                                    if st.processes_sort_by == ProcessSort::Pid {
+                                        st.processes_sort_asc = !st.processes_sort_asc;
+                                    } else {
+                                        st.processes_sort_by = ProcessSort::Pid;
+                                        st.processes_sort_asc = true;
+                                    }
+                                }
+                                KeyCode::Char('n') => {
+                                    let mut st = store.write().await;
+                                    if st.processes_sort_by == ProcessSort::Name {
+                                        st.processes_sort_asc = !st.processes_sort_asc;
+                                    } else {
+                                        st.processes_sort_by = ProcessSort::Name;
+                                        st.processes_sort_asc = true;
+                                    }
+                                }
+                                KeyCode::Char('c') => {
+                                    let mut st = store.write().await;
+                                    if st.processes_sort_by == ProcessSort::Cpu {
+                                        st.processes_sort_asc = !st.processes_sort_asc;
+                                    } else {
+                                        st.processes_sort_by = ProcessSort::Cpu;
+                                        st.processes_sort_asc = false;
+                                    }
+                                }
+                                KeyCode::Char('m') => {
+                                    let mut st = store.write().await;
+                                    if st.processes_sort_by == ProcessSort::Memory {
+                                        st.processes_sort_asc = !st.processes_sort_asc;
+                                    } else {
+                                        st.processes_sort_by = ProcessSort::Memory;
+                                        st.processes_sort_asc = false;
+                                    }
                                 }
                                 KeyCode::Char('k') => {
                                     let pid = {
@@ -509,21 +585,19 @@ async fn handle_mouse_event(store: &Store, mouse: MouseEvent, rect: ratatui::lay
             // Check if click is in the bottom area (Security/History)
             if mouse.row >= start_y && mouse.row < end_y {
                 // Check if click is in the right half (History)
-                if mouse.column >= rect.width / 2 {
-                    if !st.user_commands.is_empty() {
-                        // Determine which row was clicked if possible
-                        let row_clicked = (mouse.row - start_y).saturating_sub(2) as usize; // -2 for header/border
-                        if row_clicked < st.user_commands.len() {
-                            if st.user_selected == row_clicked && st.show_user_history {
-                                st.show_user_history = false;
-                            } else {
-                                st.user_selected = row_clicked;
-                                st.show_user_history = true;
-                            }
-                        } else if !st.user_commands.is_empty() {
-                             // Fallback: toggle if clicked in the general area but past the rows
-                             st.show_user_history = !st.show_user_history;
+                if mouse.column >= rect.width / 2 && !st.user_commands.is_empty() {
+                    // Determine which row was clicked if possible
+                    let row_clicked = (mouse.row - start_y).saturating_sub(2) as usize; // -2 for header/border
+                    if row_clicked < st.user_commands.len() {
+                        if st.user_selected == row_clicked && st.show_user_history {
+                            st.show_user_history = false;
+                        } else {
+                            st.user_selected = row_clicked;
+                            st.show_user_history = true;
                         }
+                    } else if !st.user_commands.is_empty() {
+                        // Fallback: toggle if clicked in the general area but past the rows
+                        st.show_user_history = !st.show_user_history;
                     }
                 }
             }

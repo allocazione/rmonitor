@@ -44,6 +44,8 @@ async-trait = "0.1"
 
 # Directory paths for config
 dirs = "5"
+futures-util = "0.3"
+bollard = "0.18"
 
 # Linux system calls (UID check)
 [target.'cfg(target_os = "linux")'.dependencies]

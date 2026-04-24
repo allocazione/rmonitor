@@ -56,9 +56,39 @@ pub enum ActiveTab {
     Settings,
 }
 
+/// Actions that can be performed on a Docker container.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DockerAction {
+    Start,
+    Stop,
+    Restart,
+    Kill,
+}
+
+/// Sorting criteria for the processes panel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessSort {
+    Pid,
+    Name,
+    Cpu,
+    Memory,
+}
+
+impl DockerAction {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Start => "start",
+            Self::Stop => "stop",
+            Self::Restart => "restart",
+            Self::Kill => "kill",
+        }
+    }
+}
+
 /// A running Docker container's live stats.
 #[derive(Debug, Clone)]
 pub struct DockerContainer {
+    pub id: String,
     pub name: String,
     pub image: String,
     pub status: String,
@@ -376,11 +406,16 @@ pub struct AppState {
     pub docker_error: Option<String>,
     pub containers: Vec<DockerContainer>,
     pub docker_selected: usize,
+    pub show_docker_details: bool,
+    pub docker_action_request: Option<(DockerAction, String)>,
+    pub docker_action_confirmed: Option<(DockerAction, String)>,
 
     // ── Processes ───────────────────────────────────────────────────────
     pub processes: Vec<ProcessInfo>,
     pub processes_selected: usize,
     pub processes_frozen: bool,
+    pub processes_sort_by: ProcessSort,
+    pub processes_sort_asc: bool,
 
     // ── User Commands ───────────────────────────────────────────────────
     pub user_commands: Vec<UserCommandInfo>,
@@ -470,9 +505,14 @@ impl AppState {
             docker_error: None,
             containers: Vec::new(),
             docker_selected: 0,
+            show_docker_details: false,
+            docker_action_request: None,
+            docker_action_confirmed: None,
             processes: Vec::new(),
             processes_selected: 0,
             processes_frozen: false,
+            processes_sort_by: ProcessSort::Cpu,
+            processes_sort_asc: false,
             user_commands: Vec::new(),
             user_selected: 0,
             user_history_scroll: 0,

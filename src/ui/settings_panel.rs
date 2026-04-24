@@ -8,19 +8,20 @@ use ratatui::widgets::{
 };
 use ratatui::Frame;
 
-use crate::config::{parse_hex_color, AppConfig};
-use crate::state::AppState;
+use crate::core::config::AppConfig;
+use crate::core::state::AppState;
 
 /// Render the settings editor panel.
 pub fn render(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfig) {
-    let border = parse_hex_color(&config.colors.border);
-    let bg = parse_hex_color(&config.colors.header_bg);
-    let fg = parse_hex_color(&config.colors.header_fg);
-    let accent = parse_hex_color("#7aa2f7");
-    let highlight_bg = parse_hex_color("#283457");
-    let edit_color = parse_hex_color("#9ece6a");
-    let section_color = parse_hex_color("#bb9af7");
-    let warn_color = parse_hex_color("#e0af68");
+    let colors = config.get_colors();
+    let border = colors.border;
+    let bg = colors.header_bg;
+    let fg = colors.header_fg;
+    let accent = colors.accent;
+    let highlight_bg = colors.highlight;
+    let edit_color = colors.gauge_low;
+    let section_color = colors.table_header;
+    let warn_color = colors.gauge_mid;
 
     // Clear the area
     frame.render_widget(Clear, area);
@@ -163,7 +164,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfi
 
         // Color preview swatch for color fields
         let preview = if field.key.starts_with("colors.") && !field.value.is_empty() {
-            let color = parse_hex_color(&field.value);
+            let color = config.parse_color(&field.value);
             Span::styled(" ██ ", Style::default().fg(color))
         } else {
             Span::raw("")

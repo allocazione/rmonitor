@@ -8,7 +8,7 @@ use std::sync::Mutex;
 use sysinfo::{CpuRefreshKind, Disks, MemoryRefreshKind, Networks, ProcessRefreshKind, RefreshKind, System};
 
 use crate::providers::MetricProvider;
-use crate::core::state::ProcessInfo;
+use crate::core::state::{ProcessInfo, ProcessSort};
 use crate::core::store::Store;
 
 /// `MetricProvider` implementation backed by `sysinfo`.
@@ -124,7 +124,10 @@ impl MetricProvider for SysInfoMetrics {
     }
 
     async fn refresh_all(&self, store: &Store) {
-        let is_frozen = store.read().await.processes_frozen;
+        let (is_frozen, sort_by, sort_asc) = {
+            let state = store.read().await;
+            (state.processes_frozen, state.processes_sort_by, state.processes_sort_asc)
+        };
 
         // Uptime refresh
         let uptime = {
@@ -177,7 +180,17 @@ impl MetricProvider for SysInfoMetrics {
                         memory: p.memory(),
                     })
                     .collect();
-                l.sort_by(|a, b| b.cpu_usage.partial_cmp(&a.cpu_usage).unwrap_or(std::cmp::Ordering::Equal));
+
+                l.sort_by(|a, b| {
+                    let ord = match sort_by {
+                        ProcessSort::Pid => a.pid.cmp(&b.pid),
+                        ProcessSort::Name => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                        ProcessSort::Cpu => a.cpu_usage.partial_cmp(&b.cpu_usage).unwrap_or(std::cmp::Ordering::Equal),
+                        ProcessSort::Memory => a.memory.cmp(&b.memory),
+                    };
+                    if sort_asc { ord } else { ord.reverse() }
+                });
+
                 l.truncate(100);
                 Some(l)
             } else {

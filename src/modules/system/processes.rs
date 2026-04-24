@@ -7,7 +7,7 @@ use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table};
 use ratatui::Frame;
 
 use crate::core::config::AppConfig;
-use crate::core::state::AppState;
+use crate::core::state::{AppState, ProcessSort};
 
 /// Render the Processes monitoring panel.
 pub fn render(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfig) {
@@ -31,7 +31,6 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfi
         .constraints([
             Constraint::Length(3),  // title bar
             Constraint::Min(5),    // process table
-            Constraint::Length(1), // help bar
         ])
         .split(area);
 
@@ -42,13 +41,21 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfi
         Span::styled(" [LIVE] ", Style::default().fg(green).add_modifier(Modifier::BOLD))
     };
 
+    let sort_indicator = if state.processes_sort_asc { "▲" } else { "▼" };
+    let sort_label = match state.processes_sort_by {
+        ProcessSort::Pid => "PID",
+        ProcessSort::Name => "Name",
+        ProcessSort::Cpu => "CPU%",
+        ProcessSort::Memory => "Memory",
+    };
+
     let title_line = Line::from(vec![
         Span::styled(" ⚙  Processes ", Style::default().fg(accent).add_modifier(Modifier::BOLD)),
         Span::styled("  │  ", Style::default().fg(border)),
         status_text,
         Span::styled("  │  ", Style::default().fg(border)),
         Span::styled(
-            format!("Top {} by CPU usage", state.processes.len()),
+            format!("Sorted by {} {}", sort_label, sort_indicator),
             Style::default().fg(green),
         ),
     ]);
@@ -66,10 +73,22 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfi
 
     // ── Process table ─────────────────────────────────────────────────
     let header = Row::new(vec![
-        Cell::from(Span::styled("PID", Style::default().fg(hdr_color).add_modifier(Modifier::BOLD))),
-        Cell::from(Span::styled("Name", Style::default().fg(hdr_color).add_modifier(Modifier::BOLD))),
-        Cell::from(Span::styled("CPU%", Style::default().fg(hdr_color).add_modifier(Modifier::BOLD))),
-        Cell::from(Span::styled("Memory", Style::default().fg(hdr_color).add_modifier(Modifier::BOLD))),
+        Cell::from(Span::styled(
+            format!("PID{}", if state.processes_sort_by == ProcessSort::Pid { sort_indicator } else { "" }),
+            Style::default().fg(hdr_color).add_modifier(Modifier::BOLD)
+        )),
+        Cell::from(Span::styled(
+            format!("Name{}", if state.processes_sort_by == ProcessSort::Name { sort_indicator } else { "" }),
+            Style::default().fg(hdr_color).add_modifier(Modifier::BOLD)
+        )),
+        Cell::from(Span::styled(
+            format!("CPU%{}", if state.processes_sort_by == ProcessSort::Cpu { sort_indicator } else { "" }),
+            Style::default().fg(hdr_color).add_modifier(Modifier::BOLD)
+        )),
+        Cell::from(Span::styled(
+            format!("Memory{}", if state.processes_sort_by == ProcessSort::Memory { sort_indicator } else { "" }),
+            Style::default().fg(hdr_color).add_modifier(Modifier::BOLD)
+        )),
     ])
     .height(1);
 
@@ -135,23 +154,6 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfi
 
     // We use StatefulWidget to let Ratatui handle scrolling into view
     frame.render_stateful_widget(table, chunks[1], &mut table_state);
-
-    // ── Help bar ────────────────────────────────────────────────────────
-    let help = Paragraph::new(Line::from(vec![
-        Span::styled(" ↑↓", Style::default().fg(accent).add_modifier(Modifier::BOLD)),
-        Span::styled(" Nav ", Style::default().fg(fg)),
-        Span::styled(" f", Style::default().fg(accent).add_modifier(Modifier::BOLD)),
-        Span::styled(" Freeze ", Style::default().fg(fg)),
-        Span::styled(" k", Style::default().fg(accent).add_modifier(Modifier::BOLD)),
-        Span::styled(" Kill ", Style::default().fg(fg)),
-        Span::styled(" 1-4", Style::default().fg(accent).add_modifier(Modifier::BOLD)),
-        Span::styled(" Tabs ", Style::default().fg(fg)),
-        Span::styled(" q", Style::default().fg(accent).add_modifier(Modifier::BOLD)),
-        Span::styled(" Quit", Style::default().fg(fg)),
-    ]))
-    .style(Style::default().bg(bg));
-
-    frame.render_widget(help, chunks[2]);
 }
 
 /// Format bytes to human-readable string.

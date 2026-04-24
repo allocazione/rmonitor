@@ -6,22 +6,23 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table};
 use ratatui::Frame;
 
-use crate::config::{parse_hex_color, AppConfig};
-use crate::state::AppState;
+use crate::core::config::AppConfig;
+use crate::core::state::{AppState, DockerAction};
 
 /// Render the Docker monitoring panel.
 pub fn render(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfig) {
-    let border = parse_hex_color(&config.colors.border);
-    let bg = parse_hex_color(&config.colors.header_bg);
-    let fg = parse_hex_color(&config.colors.header_fg);
-    let accent = parse_hex_color("#7aa2f7");
-    let green = parse_hex_color("#9ece6a");
-    let yellow = parse_hex_color("#e0af68");
-    let red = parse_hex_color("#f7768e");
-    let purple = parse_hex_color("#bb9af7");
-    let hdr_color = parse_hex_color(&config.colors.table_header);
-    let row_a = parse_hex_color(&config.colors.table_row_a);
-    let row_b = parse_hex_color(&config.colors.table_row_b);
+    let colors = config.get_colors();
+    let border = colors.border;
+    let bg = colors.header_bg;
+    let fg = colors.header_fg;
+    let accent = colors.accent;
+    let green = colors.gauge_low;
+    let yellow = colors.gauge_mid;
+    let red = colors.gauge_high;
+    let purple = colors.table_header;
+    let hdr_color = colors.table_header;
+    let row_a = colors.table_row_a;
+    let row_b = colors.table_row_b;
 
     frame.render_widget(Clear, area);
 
@@ -157,7 +158,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfi
             };
 
             let row_style = if is_selected {
-                Style::default().bg(parse_hex_color("#283457"))
+                Style::default().bg(colors.highlight)
             } else {
                 Style::default().bg(bg_color)
             };
@@ -199,15 +200,169 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfi
     // ── Help bar ────────────────────────────────────────────────────────
     let help = Paragraph::new(Line::from(vec![
         Span::styled(" ↑↓", Style::default().fg(accent).add_modifier(Modifier::BOLD)),
-        Span::styled(" Navigate  ", Style::default().fg(fg)),
-        Span::styled("Tab", Style::default().fg(accent).add_modifier(Modifier::BOLD)),
-        Span::styled(" Switch Tab  ", Style::default().fg(fg)),
+        Span::styled(" Nav ", Style::default().fg(fg)),
+        Span::styled("Enter", Style::default().fg(accent).add_modifier(Modifier::BOLD)),
+        Span::styled(" Details ", Style::default().fg(fg)),
+        Span::styled("s", Style::default().fg(yellow).add_modifier(Modifier::BOLD)),
+        Span::styled(" Stop ", Style::default().fg(fg)),
+        Span::styled("u", Style::default().fg(green).add_modifier(Modifier::BOLD)),
+        Span::styled(" Start ", Style::default().fg(fg)),
+        Span::styled("r", Style::default().fg(purple).add_modifier(Modifier::BOLD)),
+        Span::styled(" Restart ", Style::default().fg(fg)),
+        Span::styled("k", Style::default().fg(red).add_modifier(Modifier::BOLD)),
+        Span::styled(" Kill ", Style::default().fg(fg)),
         Span::styled("q", Style::default().fg(accent).add_modifier(Modifier::BOLD)),
         Span::styled(" Quit", Style::default().fg(fg)),
     ]))
     .style(Style::default().bg(bg));
 
     frame.render_widget(help, chunks[2]);
+
+    // ── Popups ──────────────────────────────────────────────────────────
+    if state.show_docker_details {
+        render_details_popup(frame, area, state, config);
+    }
+
+    if let Some((action, container_id)) = &state.docker_action_request {
+        render_confirm_popup(frame, area, *action, container_id, state, config);
+    }
+}
+
+fn render_details_popup(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfig) {
+    let container = match state.containers.get(state.docker_selected) {
+        Some(c) => c,
+        None => return,
+    };
+
+    let colors = config.get_colors();
+    let border = colors.border;
+    let bg = colors.header_bg;
+    let accent = colors.accent;
+    let fg = colors.header_fg;
+
+    let popup_area = centered_rect(60, 40, area);
+    frame.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .title(Span::styled(
+            format!(" Container Details: {} ", container.name),
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
+        ))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border))
+        .style(Style::default().bg(bg));
+
+    let details = vec![
+        Line::from(vec![
+            Span::styled(" ID:     ", Style::default().fg(accent)),
+            Span::raw(&container.id),
+        ]),
+        Line::from(vec![
+            Span::styled(" Name:   ", Style::default().fg(accent)),
+            Span::raw(&container.name),
+        ]),
+        Line::from(vec![
+            Span::styled(" Image:  ", Style::default().fg(accent)),
+            Span::raw(&container.image),
+        ]),
+        Line::from(vec![
+            Span::styled(" Status: ", Style::default().fg(accent)),
+            Span::raw(&container.status),
+        ]),
+        Line::from(vec![
+            Span::styled(" State:  ", Style::default().fg(accent)),
+            Span::raw(&container.state),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(" CPU Usage:    ", Style::default().fg(accent)),
+            Span::raw(format!("{:.2}%", container.cpu_percent)),
+        ]),
+        Line::from(vec![
+            Span::styled(" Memory Usage: ", Style::default().fg(accent)),
+            Span::raw(format!(
+                "{} / {} ({:.1}%)",
+                format_bytes(container.mem_usage),
+                format_bytes(container.mem_limit),
+                if container.mem_limit > 0 { (container.mem_usage as f64 / container.mem_limit as f64) * 100.0 } else { 0.0 }
+            )),
+        ]),
+        Line::from(vec![
+            Span::styled(" Network RX:   ", Style::default().fg(accent)),
+            Span::raw(format_bytes(container.net_rx)),
+        ]),
+        Line::from(vec![
+            Span::styled(" Network TX:   ", Style::default().fg(accent)),
+            Span::raw(format_bytes(container.net_tx)),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(" Press ESC to close ", Style::default().fg(fg).add_modifier(Modifier::ITALIC))),
+    ];
+
+    frame.render_widget(Paragraph::new(details).block(block), popup_area);
+}
+
+fn render_confirm_popup(frame: &mut Frame, area: Rect, action: DockerAction, container_id: &str, state: &AppState, config: &AppConfig) {
+    let container_name = state.containers.iter()
+        .find(|c| c.id == *container_id)
+        .map(|c| c.name.as_str())
+        .unwrap_or("Unknown");
+
+    let colors = config.get_colors();
+    let border = colors.border;
+    let bg = colors.header_bg;
+    let red = colors.gauge_high;
+    let fg = colors.header_fg;
+
+    let popup_area = centered_rect(40, 20, area);
+    frame.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .title(Span::styled(" Confirmation ", Style::default().fg(red).add_modifier(Modifier::BOLD)))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(red))
+        .style(Style::default().bg(bg));
+
+    let text = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::raw(" Are you sure you want to "),
+            Span::styled(action.as_str().to_uppercase(), Style::default().fg(red).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::from(vec![
+            Span::raw(" container "),
+            Span::styled(container_name, Style::default().fg(fg).add_modifier(Modifier::BOLD)),
+            Span::raw("?"),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(" [Y] Yes  ", Style::default().fg(red).add_modifier(Modifier::BOLD)),
+            Span::styled(" [N] No ", Style::default().fg(fg)),
+        ]),
+    ];
+
+    frame.render_widget(Paragraph::new(text).block(block).alignment(ratatui::layout::Alignment::Center), popup_area);
+}
+
+/// Helper function to create a centered rect using up certain percentage of the available rect `r`
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
 }
 
 /// Format bytes to human-readable string.

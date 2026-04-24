@@ -93,6 +93,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfi
                     Block::default()
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(accent))
+                        .style(Style::default().bg(bg))
                         .title(Span::styled(
                             format!(" History: {} (↑/↓ to scroll, Esc to close) ", user_info.username),
                             Style::default().fg(accent).add_modifier(Modifier::BOLD),

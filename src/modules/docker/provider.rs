@@ -6,11 +6,11 @@
 
 use std::time::Duration;
 
-use bollard::container::{ListContainersOptions, StatsOptions};
+use bollard::container::{ListContainersOptions, StatsOptions, StopContainerOptions, StartContainerOptions, RestartContainerOptions, KillContainerOptions};
 use bollard::Docker;
 use futures_util::TryStreamExt;
 
-use crate::core::state::DockerContainer;
+use crate::core::state::{DockerContainer, DockerAction};
 use crate::core::store::Store;
 
 /// Interval between Docker polling cycles.
@@ -44,6 +44,19 @@ pub async fn watch_docker(store: Store) {
 
     // Main polling loop
     loop {
+        // Check for confirmed actions
+        let action_to_perform = {
+            let mut st = store.write().await;
+            st.docker_action_confirmed.take()
+        };
+
+        if let Some((action, container_id)) = action_to_perform {
+            if let Err(e) = execute_docker_action(&docker, action, &container_id).await {
+                let mut st = store.write().await;
+                st.docker_error = Some(format!("Action failed: {}", e));
+            }
+        }
+
         if let Err(e) = poll_containers(&docker, &store).await {
             let mut st = store.write().await;
             st.docker_error = Some(format!("Docker error: {}", e));
@@ -51,6 +64,32 @@ pub async fn watch_docker(store: Store) {
         }
 
         tokio::time::sleep(DOCKER_POLL_INTERVAL).await;
+    }
+}
+
+/// Execute a Docker action.
+pub async fn execute_docker_action(docker: &Docker, action: DockerAction, container_id: &str) -> Result<(), String> {
+    match action {
+        DockerAction::Stop => {
+            docker.stop_container(container_id, None::<StopContainerOptions>)
+                .await
+                .map_err(|e| format!("Stop failed: {}", e))
+        }
+        DockerAction::Start => {
+            docker.start_container(container_id, None::<StartContainerOptions<String>>)
+                .await
+                .map_err(|e| format!("Start failed: {}", e))
+        }
+        DockerAction::Restart => {
+            docker.restart_container(container_id, None::<RestartContainerOptions>)
+                .await
+                .map_err(|e| format!("Restart failed: {}", e))
+        }
+        DockerAction::Kill => {
+            docker.kill_container(container_id, None::<KillContainerOptions<String>>)
+                .await
+                .map_err(|e| format!("Kill failed: {}", e))
+        }
     }
 }
 
@@ -109,14 +148,15 @@ async fn poll_containers(docker: &Docker, store: &Store) -> Result<(), String> {
             } else {
                 (0.0, 0, 0, 0, 0)
             };
-            (name, image, status, state, stats)
+            (id_c, name, image, status, state, stats)
         });
     }
 
     let joined_results = futures_util::future::join_all(tasks).await;
 
-    for (name, image, status, state, (cpu_percent, mem_usage, mem_limit, net_rx, net_tx)) in joined_results {
+    for (id, name, image, status, state, (cpu_percent, mem_usage, mem_limit, net_rx, net_tx)) in joined_results {
         results.push(DockerContainer {
+            id,
             name,
             image,
             status,
