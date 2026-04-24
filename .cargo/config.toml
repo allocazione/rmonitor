@@ -1,0 +1,14 @@
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld.exe"
+
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[build]
+# Use the newer, faster sparse registry for fetching dependencies
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
+
+[env]
+# Enable parallel frontend if using a nightly compiler (optional)
+# RUSTFLAGS = "-Zthreads=8"

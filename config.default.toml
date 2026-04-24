@@ -1,0 +1,52 @@
+# ╔══════════════════════════════════════════════════════════╗
+# ║              rmonitor Configuration File                 ║
+# ║                                                          ║
+# ║  Copy to: ~/.config/rmonitor/config.toml                 ║
+# ║  (Windows: %APPDATA%\rmonitor\config.toml)               ║
+# ╚══════════════════════════════════════════════════════════╝
+
+[general]
+# System metrics polling interval in milliseconds
+refresh_rate_ms = 2000
+
+# Target UI frames per second (max 120)
+ui_fps = 60
+
+# How long login alert toasts remain visible (seconds)
+alert_duration_secs = 5
+
+[colors]
+# All colors use hex format: "#RRGGBB"
+header_bg    = "#1a1b26"
+header_fg    = "#c0caf5"
+gauge_low    = "#9ece6a"     # CPU < 50%
+gauge_mid    = "#e0af68"     # CPU 50-80%
+gauge_high   = "#f7768e"     # CPU > 80%
+gauge_empty  = "#3b4261"
+sparkline    = "#7aa2f7"
+table_header = "#bb9af7"
+table_row_a  = "#1a1b26"
+table_row_b  = "#24283b"
+alert_bg     = "#f7768e"
+alert_fg     = "#1a1b26"
+border       = "#565f89"
+
+[paths]
+# Linux only — override auth log location.
+# Uncomment ONE of the following:
+# auth_log = "/var/log/auth.log"
+# auth_log = "/var/log/secure"
+
+[network]
+# Plain-text endpoint to fetch your public IPv4
+public_ip_url = "https://api.ipify.org"
+
+# GeoIP lookup template. {ip} is replaced at runtime.
+# Uses the free ip-api.com endpoint (45 req/min limit).
+geoip_url_template = "http://ip-api.com/json/{ip}?fields=status,country,city"
+
+# Max cached GeoIP results (LRU eviction)
+geoip_cache_size = 128
+
+# HTTP request timeout in seconds
+request_timeout_secs = 3
