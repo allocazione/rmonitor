@@ -129,7 +129,7 @@ impl UnixConnectionProvider {
                 let geo = self.geo_cache.lookup(&conn.remote_ip).await;
                 network_entries.push(ConnectionEntry {
                     user: "unknown (socket)".into(),
-                    source_ip: conn.remote_ip,
+                    source_ip: conn.remote_ip.clone(),
                     protocol: conn.protocol,
                     login_time: Utc::now(),
                     location: geo.display(),
