@@ -5,7 +5,7 @@ use chrono::Utc;
 use regex::Regex;
 use std::path::PathBuf;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::fs::File;
 use tokio::process::Command;
 use std::process::Stdio;
@@ -16,14 +16,17 @@ use crate::providers::ConnectionProvider;
 use crate::core::state::{AlertEntry, ConnectionEntry};
 use crate::core::store::Store;
 
+use std::sync::Arc;
+
 pub struct UnixConnectionProvider {
+    #[allow(dead_code)]
     log_path: PathBuf,
-    geo_cache: std::sync::Arc<GeoIpCache>,
+    geo_cache: Arc<GeoIpCache>,
     alert_dur_secs: i64,
 }
 
 impl UnixConnectionProvider {
-    pub fn new(config: &AppConfig, geo_cache: std::sync::Arc<GeoIpCache>) -> Self {
+    pub fn new(config: &AppConfig, geo_cache: Arc<GeoIpCache>) -> Self {
         let log_path = if let Some(ref p) = config.paths.auth_log {
             PathBuf::from(p)
         } else {
@@ -40,18 +43,25 @@ impl UnixConnectionProvider {
         }
     }
 
-    async fn fetch_who_sessions(&self, store: &Store) {
-        let output = match Command::new("who").arg("-u").output().await {
+    async fn fetch_who_sessions(&self) -> Vec<ConnectionEntry> {
+        let output = match Command::new("who")
+            .arg("-u")
+            .env("LANG", "C")
+            .output()
+            .await {
             Ok(o) => o,
             Err(_) => {
-                // Fallback to plain who if -u fails
-                match Command::new("who").output().await {
+                match Command::new("who")
+                    .env("LANG", "C")
+                    .output()
+                    .await {
                     Ok(o) => o,
-                    Err(_) => return,
+                    Err(_) => return Vec::new(),
                 }
             }
         };
 
+        let mut entries = Vec::new();
         let content = String::from_utf8_lossy(&output.stdout);
         for line in content.lines() {
             let parts: Vec<&str> = line.split_whitespace().collect();
@@ -60,21 +70,19 @@ impl UnixConnectionProvider {
             let user = parts[0];
             let tty = parts[1];
             
-            // Try to find IP in parentheses
             let mut ip = "local".to_string();
             for part in &parts {
                 if part.starts_with('(') && part.ends_with(')') {
                     ip = part[1..part.len()-1].to_string();
+                    // Some systems put :0 or other display info in ()
+                    if ip.starts_with(':') {
+                        ip = "local".to_string();
+                    }
                     break;
                 }
             }
 
-            let sid = if ip == "local" {
-                format!("unix-local-{}", tty)
-            } else {
-                format!("unix-remote-{}", tty)
-            };
-
+            let sid = format!("unix-{}", tty);
             let protocol = if ip == "local" { "Console".to_string() } else { "SSH".to_string() };
             let geo = if ip != "local" {
                 self.geo_cache.lookup(&ip).await
@@ -85,15 +93,37 @@ impl UnixConnectionProvider {
                 }
             };
 
-            let mut st = store.write().await;
-            st.add_connection(ConnectionEntry {
+            entries.push(ConnectionEntry {
                 user: user.into(),
                 source_ip: ip,
                 protocol,
-                login_time: Utc::now(),
+                login_time: Utc::now(), // Best effort, who doesn't always provide precise seconds
                 location: geo.display(),
                 session_id: sid,
             });
+        }
+        entries
+    }
+
+    async fn sync_sessions(&self, store: &Store) {
+        let fresh_sessions = self.fetch_who_sessions().await;
+        let mut st = store.write().await;
+        
+        // Remove sessions that are no longer in 'who'
+        // But only if they were 'unix-' type (to not interfere with log-based ones if they differ)
+        st.connections.retain(|c| {
+            if c.session_id.starts_with("unix-") {
+                fresh_sessions.iter().any(|f| f.session_id == c.session_id)
+            } else {
+                true // Keep log-based sessions for now, they usually have shorter TTL or are removed by 'closed' events
+            }
+        });
+
+        // Add or update
+        for session in fresh_sessions {
+            if !st.connections.iter().any(|c| c.session_id == session.session_id) {
+                st.add_connection(session);
+            }
         }
     }
 
@@ -107,10 +137,26 @@ impl UnixConnectionProvider {
         ).unwrap();
         let alert_dur = chrono::Duration::seconds(self.alert_dur_secs);
 
-        // 1. Fetch current sessions from 'who' first
-        self.fetch_who_sessions(store).await;
+        // 1. Initial sync
+        self.sync_sessions(store).await;
 
-        // 2. Load recent history (last 24h)
+        // 2. Spawn a periodic sync task
+        let store_c = store.clone();
+        let provider_arc = Arc::new(UnixConnectionProvider {
+            log_path: self.log_path.clone(),
+            geo_cache: self.geo_cache.clone(),
+            alert_dur_secs: self.alert_dur_secs,
+        });
+        
+        let provider_c = provider_arc.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                provider_c.sync_sessions(&store_c).await;
+            }
+        });
+
+        // 3. Load recent history (last 24h)
         let history = Command::new("journalctl")
             .args(&["-o", "short", "--no-hostname", "-t", "sshd", "-t", "login", "-t", "systemd-logind", "--since", "24 hours ago"])
             .output()
@@ -123,7 +169,7 @@ impl UnixConnectionProvider {
             }
         }
 
-        // 3. Start following for live updates
+        // 4. Start following for live updates
         let mut child = Command::new("journalctl")
             .args(&["-f", "-o", "short", "--no-hostname", "-t", "sshd", "-t", "login", "-t", "systemd-logind", "--since", "now"])
             .stdout(Stdio::piped())
@@ -140,6 +186,8 @@ impl UnixConnectionProvider {
                 Ok(0) => break,
                 Ok(_) => {
                     self.process_line_internal(&buf, store, &re_open, &re_pam, alert_dur, true).await;
+                    // Trigger a quick sync after a log event to catch 'who' updates
+                    self.sync_sessions(store).await;
                 }
                 Err(e) => return Err(e.into()),
             }
@@ -187,7 +235,7 @@ impl UnixConnectionProvider {
 
         // Handle PAM session opened/closed (generic for local and remote)
         if let Some(caps) = re_pam.captures(line) {
-            let proc_name = &caps[1];
+            let _proc_name = &caps[1];
             let pid = &caps[2];
             let service = &caps[3];
             let action = &caps[4];
@@ -227,6 +275,7 @@ impl UnixConnectionProvider {
         }
     }
 
+    #[allow(dead_code)]
     async fn watch_files(&self, store: &Store) {
         let file = match File::open(&self.log_path).await {
             Ok(f) => f,
@@ -239,8 +288,12 @@ impl UnixConnectionProvider {
                 if !st.permission_warnings.contains(&msg) {
                     st.permission_warnings.push(msg);
                 }
-                // Even if file fails, we still have 'who' data
-                return;
+                
+                // Fallback: just poll 'who' periodically if we can't read logs
+                loop {
+                    self.sync_sessions(store).await;
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                }
             }
         };
 
@@ -252,10 +305,25 @@ impl UnixConnectionProvider {
         ).unwrap();
         let alert_dur = chrono::Duration::seconds(self.alert_dur_secs);
 
-        // 1. Fetch current sessions from 'who'
-        self.fetch_who_sessions(store).await;
+        // 1. Initial sync
+        self.sync_sessions(store).await;
 
-        // 2. Read history from the file
+        // 2. Spawn periodic sync
+        let store_c = store.clone();
+        let provider_arc = Arc::new(UnixConnectionProvider {
+            log_path: self.log_path.clone(),
+            geo_cache: self.geo_cache.clone(),
+            alert_dur_secs: self.alert_dur_secs,
+        });
+        let provider_c = provider_arc.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(5)).await;
+                provider_c.sync_sessions(&store_c).await;
+            }
+        });
+
+        // 3. Read history from the file
         let mut reader = BufReader::new(file);
         let mut buf = String::new();
         
@@ -265,7 +333,7 @@ impl UnixConnectionProvider {
             buf.clear();
         }
 
-        // 3. Continue tailing for live updates
+        // 4. Continue tailing for live updates
         loop {
             buf.clear();
             match reader.read_line(&mut buf).await {
@@ -274,6 +342,7 @@ impl UnixConnectionProvider {
                 }
                 Ok(_) => {
                     self.process_line_internal(&buf, store, &re_open, &re_pam, alert_dur, true).await;
+                    self.sync_sessions(store).await;
                 }
                 Err(_) => {
                     tokio::time::sleep(Duration::from_secs(5)).await;
@@ -291,13 +360,14 @@ impl ConnectionProvider for UnixConnectionProvider {
             // Try journalctl first on Linux
             if let Err(e) = self.watch_journal(store).await {
                 eprintln!("journalctl watcher failed or not available: {}. Falling back to file tailing.", e);
+                // On failure, fall through to watch_files
+                self.watch_files(store).await;
             }
         }
 
         #[cfg(not(target_os = "linux"))]
         {
-            // On non-linux (BSD/macOS), we always fetch who and then tail files
-            self.fetch_who_sessions(store).await;
+            // On non-linux (BSD/macOS), we poll who and then tail files
             self.watch_files(store).await;
         }
     }
