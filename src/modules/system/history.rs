@@ -1,5 +1,4 @@
 use std::fs;
-use std::collections::VecDeque;
 
 #[cfg(target_os = "linux")]
 use std::path::PathBuf;

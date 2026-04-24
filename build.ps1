@@ -24,6 +24,16 @@ if (Test-Path -Path $ExePath) {
     $Duration = [Math]::Round(((Get-Date) - $StartTime).TotalSeconds)
     Write-Host "Done! (${Duration}s)"
     Write-Host "Binary: $OutputDir\rmonitor.exe"
+
+    # Add the output directory to User PATH if not already present
+    $FullPath = (Resolve-Path $OutputDir).Path
+    $CurrentPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    
+    if ($CurrentPath -notmatch [regex]::Escape($FullPath)) {
+        Write-Host "Adding $FullPath to User PATH..."
+        [Environment]::SetEnvironmentVariable("Path", "$CurrentPath;$FullPath", "User")
+        Write-Host "Note: You may need to restart your terminal for the PATH changes to take effect."
+    }
 } else {
     Write-Host "Build failed: Could not find compiled executable."
     exit 1

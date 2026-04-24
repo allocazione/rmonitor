@@ -49,13 +49,11 @@ impl ConnectionProvider for WindowsConnectionProvider {
     async fn watch_connections(&self, store: &Store) {
         let (tx, mut rx) = mpsc::unbounded_channel::<WinEvent>();
 
-        // Spawn the blocking Windows Event Log subscription on a dedicated thread
         let tx_clone = tx.clone();
         let store_clone = store.clone();
+        let rt = tokio::runtime::Handle::current();
         let _sub_handle = std::thread::spawn(move || {
             if let Err(e) = subscribe_security_events(tx_clone) {
-                // Send the error as a permission warning via a blocking approach
-                let rt = tokio::runtime::Handle::current();
                 rt.block_on(async {
                     store_clone
                         .write()
@@ -63,6 +61,62 @@ impl ConnectionProvider for WindowsConnectionProvider {
                         .permission_warnings
                         .push(format!("EventLog: {}", e));
                 });
+            }
+        });
+
+        // Spawn a periodic task to poll ConnectionTracker for raw socket connections
+        let store_for_tracker = store.clone();
+        let geo_cache_for_tracker = Arc::clone(&self.geo_cache);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                
+                let connections = match crate::modules::security::connection_tracker::ConnectionTracker::get_established_connections() {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+
+                let mut st = store_for_tracker.write().await;
+                let existing_ips: std::collections::HashSet<String> = st.connections
+                    .iter()
+                    .filter(|c| !c.session_id.starts_with("socket-") && c.source_ip != "local")
+                    .map(|c| c.source_ip.clone())
+                    .collect();
+
+                // Remove socket connections that are no longer established or have been replaced by a real logon event
+                st.connections.retain(|c| {
+                    if c.session_id.starts_with("socket-") {
+                        if existing_ips.contains(&c.source_ip) {
+                            return false; // Replaced by a real logon event
+                        }
+                        connections.iter().any(|new_c| new_c.remote_ip == c.source_ip)
+                    } else {
+                        true
+                    }
+                });
+
+                // Add new socket connections
+                for conn in connections {
+                    if !existing_ips.contains(&conn.remote_ip) {
+                        let is_new = !st.connections.iter().any(|c| c.session_id == format!("socket-{}", conn.remote_ip));
+                        if is_new {
+                            drop(st);
+                            let geo = geo_cache_for_tracker.lookup(&conn.remote_ip).await;
+                            st = store_for_tracker.write().await;
+                            
+                            if !st.connections.iter().any(|c| c.session_id == format!("socket-{}", conn.remote_ip)) {
+                                st.add_connection(ConnectionEntry {
+                                    user: "unknown (socket)".into(),
+                                    source_ip: conn.remote_ip.clone(),
+                                    protocol: conn.protocol,
+                                    login_time: Utc::now(),
+                                    location: geo.display(),
+                                    session_id: format!("socket-{}", conn.remote_ip),
+                                });
+                            }
+                        }
+                    }
+                }
             }
         });
 
@@ -174,7 +228,7 @@ fn subscribe_security_events(
                         if !buffer.is_null() && bytes_returned > 2 {
                             user = String::from_utf16_lossy(std::slice::from_raw_parts(buffer, (bytes_returned / 2).saturating_sub(1) as usize));
                         }
-                        let _ = WTSFreeMemory(buffer as *mut _);
+                        WTSFreeMemory(buffer as *mut _);
                     }
 
                     if user.is_empty() || user == "SYSTEM" || user.ends_with('$') {
@@ -204,7 +258,7 @@ fn subscribe_security_events(
                                 ip = Ipv6Addr::from(arr).to_string();
                             }
                         }
-                        let _ = WTSFreeMemory(buffer as *mut _);
+                        WTSFreeMemory(buffer as *mut _);
                     }
 
                     let logon_id = format!("wts-{}", session.SessionId);
@@ -218,7 +272,7 @@ fn subscribe_security_events(
                     });
                 }
             }
-            let _ = WTSFreeMemory(session_info as *mut _);
+            WTSFreeMemory(session_info as *mut _);
         } else {
             // Report WTS enumeration failure
             let _ = tx.send(WinEvent::Logon {

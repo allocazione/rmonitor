@@ -3,6 +3,8 @@
 //! Entry point: installs panic hooks for terminal cleanup, loads config,
 //! initializes shared state, spawns background tasks, and runs the TUI.
 
+#![deny(warnings)]
+
 mod core;
 mod modules;
 mod providers;
