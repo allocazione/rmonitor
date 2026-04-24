@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use regex::Regex;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -108,14 +109,119 @@ impl UnixConnectionProvider {
         entries
     }
 
+    fn parse_host_port(value: &str) -> Option<(String, String)> {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        if let Some(stripped) = trimmed.strip_prefix('[') {
+            let end = stripped.find(']')?;
+            let host = &stripped[..end];
+            let after = &stripped[end + 1..];
+            let port = after.strip_prefix(':')?;
+            if host.is_empty() || port.is_empty() {
+                return None;
+            }
+            return Some((host.to_string(), port.to_string()));
+        }
+
+        let (host, port) = trimmed.rsplit_once(':')?;
+        if host.is_empty() || port.is_empty() {
+            return None;
+        }
+        Some((host.to_string(), port.to_string()))
+    }
+
+    async fn fetch_established_network_hosts(
+        &self,
+        existing_ips: &HashSet<String>,
+    ) -> Vec<ConnectionEntry> {
+        let output = match Command::new("ss")
+            .args(["-Htn", "state", "established"])
+            .env("LANG", "C")
+            .output()
+            .await
+        {
+            Ok(o) => o,
+            Err(_) => return Vec::new(),
+        };
+
+        if !output.status.success() {
+            return Vec::new();
+        }
+
+        let content = String::from_utf8_lossy(&output.stdout);
+        let mut seen_hosts: HashSet<String> = HashSet::new();
+        let mut entries = Vec::new();
+
+        for line in content.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 5 {
+                continue;
+            }
+
+            // ss -Htn output columns:
+            // Recv-Q Send-Q LocalAddress:Port PeerAddress:Port
+            let local = parts[3];
+            let peer = parts[4];
+
+            let (_, local_port) = match Self::parse_host_port(local) {
+                Some(v) => v,
+                None => continue,
+            };
+            let (peer_ip, _peer_port) = match Self::parse_host_port(peer) {
+                Some(v) => v,
+                None => continue,
+            };
+
+            // Track remote admin sessions by local service port.
+            let protocol = match local_port.as_str() {
+                "22" => "SSH (socket)".to_string(),
+                "3389" => "RDP (socket)".to_string(),
+                _ => continue,
+            };
+
+            // Ignore local/unspecified addresses and avoid duplicate rows.
+            if peer_ip == "*" || peer_ip == "0.0.0.0" || peer_ip == "::" {
+                continue;
+            }
+            if peer_ip == "127.0.0.1" || peer_ip == "::1" || peer_ip.starts_with("::ffff:127.") {
+                continue;
+            }
+            if existing_ips.contains(&peer_ip) || !seen_hosts.insert(peer_ip.clone()) {
+                continue;
+            }
+
+            let geo = self.geo_cache.lookup(&peer_ip).await;
+            entries.push(ConnectionEntry {
+                user: "(network)".into(),
+                source_ip: peer_ip.clone(),
+                protocol,
+                login_time: Utc::now(),
+                location: geo.display(),
+                session_id: format!("net-host-{}", peer_ip),
+            });
+        }
+
+        entries
+    }
+
     async fn sync_sessions(&self, store: &Store) {
-        let fresh_sessions = self.fetch_who_sessions().await;
+        let mut fresh_sessions = self.fetch_who_sessions().await;
+        let existing_ips: HashSet<String> = fresh_sessions
+            .iter()
+            .filter(|s| s.source_ip != "local")
+            .map(|s| s.source_ip.clone())
+            .collect();
+        let mut network_hosts = self.fetch_established_network_hosts(&existing_ips).await;
+        fresh_sessions.append(&mut network_hosts);
         let mut st = store.write().await;
         
-        // Remove sessions that are no longer in 'who'
-        // But only if they were 'unix-' type (to not interfere with log-based ones if they differ)
+        // Remove sessions that are no longer present in our poll-based sources.
+        // Keep log-driven session IDs ("ssh-" / "pam-") so live journal events still work.
         st.connections.retain(|c| {
-            if c.session_id.starts_with("unix-") {
+            if c.session_id.starts_with("unix-") || c.session_id.starts_with("net-host-") {
                 fresh_sessions.iter().any(|f| f.session_id == c.session_id)
             } else {
                 true // Keep log-based sessions for now, they usually have shorter TTL or are removed by 'closed' events
