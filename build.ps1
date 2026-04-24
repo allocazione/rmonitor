@@ -1,7 +1,22 @@
 #!/usr/bin/env pwsh
 
+# Build rmonitor and copy the executable into release/windows
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 Set-Location $ScriptDir
+
+# Dependency Checks
+Write-Host "Checking dependencies..." -ForegroundColor Cyan
+$missingDeps = @()
+
+if (!(Get-Command cargo -ErrorAction SilentlyContinue)) {
+    $missingDeps += "Rust/Cargo"
+}
+
+if ($missingDeps.Count -gt 0) {
+    Write-Host "Error: Missing dependencies: $($missingDeps -join ', ')" -ForegroundColor Red
+    Write-Host "Please refer to the Prerequisites section in README.md for installation instructions." -ForegroundColor Yellow
+    exit 1
+}
 
 $startTime = Get-Date
 Write-Host "Building rmonitor (Release)..." -ForegroundColor Cyan

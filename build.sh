@@ -1,8 +1,41 @@
 #!/usr/bin/env bash
 set -e
 
+# Build rmonitor and copy the executable into release/linux
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
+
+# Dependency Checks
+echo "Checking dependencies..."
+MISSING_DEPS=()
+
+if ! command -v cargo &> /dev/null; then
+    MISSING_DEPS+=("rust/cargo")
+fi
+
+if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+    if ! command -v pkg-config &> /dev/null; then
+        MISSING_DEPS+=("pkg-config")
+    fi
+    if ! command -v clang &> /dev/null; then
+        MISSING_DEPS+=("clang")
+    fi
+    if ! command -v lld &> /dev/null; then
+        MISSING_DEPS+=("lld")
+    fi
+    # Check for openssl headers (rough check via pkg-config if it exists)
+    if command -v pkg-config &> /dev/null; then
+        if ! pkg-config --exists openssl; then
+            MISSING_DEPS+=("openssl-dev")
+        fi
+    fi
+fi
+
+if [ ${#MISSING_DEPS[@]} -ne 0 ]; then
+    echo "Error: Missing dependencies: ${MISSING_DEPS[*]}"
+    echo "Please refer to the Prerequisites section in README.md for installation instructions."
+    exit 1
+fi
 
 START_TIME=$(date +%s)
 echo "Building rmonitor (Release)..."

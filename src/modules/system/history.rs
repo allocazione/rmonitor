@@ -2,6 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 use crate::core::state::UserCommandInfo;
 use crate::core::store::Store;
+use std::collections::VecDeque;
 
 /// Fetch command history for all users on the system.
 pub fn fetch_user_history() -> Vec<UserCommandInfo> {

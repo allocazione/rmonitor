@@ -17,6 +17,30 @@ rmonitor is a high-performance, cross-platform System, Docker, and Security Moni
 
 ---
 
+## Prerequisites
+
+Before building `rmonitor`, ensure you have the following dependencies installed:
+
+### All Platforms
+- [Rust & Cargo](https://www.rust-lang.org/tools/install) (1.75+)
+
+### Linux (Ubuntu/Debian)
+```bash
+sudo apt update
+sudo apt install -y build-essential pkg-config libssl-dev clang lld
+```
+
+### Linux (Fedora/RHEL)
+```bash
+sudo dnf groupinstall "Development Tools"
+sudo dnf install pkg-config openssl-devel clang lld
+```
+
+### macOS
+```bash
+brew install pkg-config openssl llvm
+```
+
 ## Installation & Setup
 
 Ensure you have [Rust](https://www.rust-lang.org/tools/install) installed.
