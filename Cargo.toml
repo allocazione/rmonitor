@@ -45,6 +45,10 @@ async-trait = "0.1"
 # Directory paths for config
 dirs = "5"
 
+# Linux system calls (UID check)
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
 # Docker API client
 bollard = "0.18"
 

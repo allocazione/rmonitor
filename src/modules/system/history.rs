@@ -2,7 +2,10 @@ use std::fs;
 use std::path::PathBuf;
 use crate::core::state::UserCommandInfo;
 use crate::core::store::Store;
+#[allow(unused_imports)]
 use std::collections::VecDeque;
+#[allow(unused_imports)]
+use std::time::Duration;
 
 /// Fetch command history for all users on the system.
 pub fn fetch_user_history() -> Vec<UserCommandInfo> {
@@ -10,6 +13,7 @@ pub fn fetch_user_history() -> Vec<UserCommandInfo> {
 
     #[cfg(target_os = "linux")]
     {
+        // Use /etc/passwd to find users, but handle potential lack of access gracefully
         if let Ok(passwd) = fs::read_to_string("/etc/passwd") {
             for line in passwd.lines() {
                 let parts: Vec<&str> = line.split(':').collect();
@@ -22,6 +26,15 @@ pub fn fetch_user_history() -> Vec<UserCommandInfo> {
                         if let Some(info) = get_linux_user_history(username, home_dir) {
                             users.push(info);
                         }
+                    }
+                }
+            }
+        } else {
+            // Fallback: If /etc/passwd is inaccessible, at least try current user's home
+            if let Ok(home) = std::env::var("HOME") {
+                if let Ok(user) = std::env::var("USER") {
+                    if let Some(info) = get_linux_user_history(user, &home) {
+                        users.push(info);
                     }
                 }
             }
@@ -55,20 +68,33 @@ pub fn fetch_user_history() -> Vec<UserCommandInfo> {
 #[cfg(target_os = "linux")]
 fn get_linux_user_history(username: String, home_dir: &str) -> Option<UserCommandInfo> {
     let history_files = [".bash_history", ".zsh_history", ".history"];
-    let mut history = VecDeque::with_capacity(100);
+    let mut history = VecDeque::with_capacity(300);
     let mut last_command = String::new();
 
     for file in history_files {
         let path = PathBuf::from(home_dir).join(file);
         if let Ok(content) = fs::read_to_string(&path) {
-            let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
-            if !lines.is_empty() {
-                // Take last 100
-                let start = lines.len().saturating_sub(100);
-                let last_100: Vec<String> = lines[start..].iter().rev().cloned().collect();
+            let filtered_lines: Vec<String> = content
+                .lines()
+                .filter(|line| !line.starts_with('#'))
+                .map(|line| {
+                    // Handle Zsh extended history format: ": 1234567890:0;command"
+                    if line.starts_with(':') {
+                        if let Some(pos) = line.find(';') {
+                            return line[pos + 1..].to_string();
+                        }
+                    }
+                    line.to_string()
+                })
+                .collect();
+
+            if !filtered_lines.is_empty() {
+                // Take last 300
+                let start = filtered_lines.len().saturating_sub(300);
+                let last_300: Vec<String> = filtered_lines[start..].iter().rev().cloned().collect();
                 
-                last_command = last_100[0].clone();
-                history = last_100.into_iter().collect();
+                last_command = last_300[0].clone();
+                history = last_300.into_iter().collect();
                 break;
             }
         }
@@ -88,13 +114,13 @@ fn get_windows_user_history(username: String, home_path: &PathBuf) -> Option<Use
     if let Ok(content) = fs::read_to_string(&ps_history_path) {
         let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
         if !lines.is_empty() {
-            let start = lines.len().saturating_sub(100);
-            let last_100: Vec<String> = lines[start..].iter().rev().cloned().collect();
+            let start = lines.len().saturating_sub(300);
+            let last_300: Vec<String> = lines[start..].iter().rev().cloned().collect();
 
             return Some(UserCommandInfo {
                 username,
-                last_command: last_100[0].clone(),
-                history: last_100.into_iter().collect(),
+                last_command: last_300[0].clone(),
+                history: last_300.into_iter().collect(),
             });
         }
     }

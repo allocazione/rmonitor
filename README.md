@@ -45,7 +45,19 @@ brew install pkg-config openssl llvm
 
 Ensure you have [Rust](https://www.rust-lang.org/tools/install) installed.
 
-### 1. Build the application
+### 1. Build & Install Globally (Recommended)
+
+To make `rmonitor` available everywhere in your shell/cmd, run:
+
+```bash
+cargo install --path .
+```
+
+After this, you can simply type `rmonitor` in any terminal to start the app.
+
+### 2. Manual Build
+
+If you prefer to build manually without installing:
 
 ```bash
 cargo build --release
@@ -62,6 +74,17 @@ powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
 ### 2. Run the application
+
+If installed globally:
+
+```bash
+# Run from anywhere
+rmonitor
+```
+
+*Note: On Linux, you may need sudo for Security Monitoring (reading auth logs).*
+
+If running from the project directory:
 
 #### On Linux:
 

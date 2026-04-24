@@ -94,11 +94,12 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfi
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(accent))
                         .title(Span::styled(
-                            format!(" History: {} ", user_info.username),
+                            format!(" History: {} (↑/↓ to scroll, Esc to close) ", user_info.username),
                             Style::default().fg(accent).add_modifier(Modifier::BOLD),
                         )),
                 )
-                .style(Style::default().fg(fg).bg(bg));
+                .style(Style::default().fg(fg).bg(bg))
+                .scroll((state.user_history_scroll, 0));
 
             frame.render_widget(p, popup_area);
         }

@@ -39,35 +39,58 @@ pub fn draw(frame: &mut Frame, state: &AppState, config: &AppConfig) {
 
 /// Render the dashboard (main monitoring view).
 fn draw_dashboard(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfig) {
-    let main_chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
+    let is_narrow = area.width < 100;
+
+    let main_constraints = if is_narrow {
+        vec![
+            Constraint::Length(3),                            // header
+            Constraint::Length(calc_cpu_panel_height(state)), // CPU
+            Constraint::Length(5),                            // Memory
+            Constraint::Min(6),                               // Security
+            Constraint::Min(6),                               // History
+            Constraint::Length(1),                            // status / help bar
+        ]
+    } else {
+        vec![
             Constraint::Length(3),                            // header
             Constraint::Length(calc_cpu_panel_height(state)), // CPU + memory
             Constraint::Min(6),                               // security + history
             Constraint::Length(1),                            // status / help bar
-        ])
+        ]
+    };
+
+    let main_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(main_constraints)
         .split(area);
 
     header::render(frame, main_chunks[0], state, config);
 
-    let metrics_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(main_chunks[1]);
+    if is_narrow {
+        cpu::render(frame, main_chunks[1], state, config);
+        memory::render(frame, main_chunks[2], state, config);
+        security_panel::render(frame, main_chunks[3], state, config);
+        history_panel::render(frame, main_chunks[4], state, config);
+        render_status_bar(frame, main_chunks[5], state, config);
+    } else {
+        let metrics_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(main_chunks[1]);
 
-    cpu::render(frame, metrics_chunks[0], state, config);
-    memory::render(frame, metrics_chunks[1], state, config);
+        cpu::render(frame, metrics_chunks[0], state, config);
+        memory::render(frame, metrics_chunks[1], state, config);
 
-    let bottom_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(main_chunks[2]);
+        let bottom_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(main_chunks[2]);
 
-    security_panel::render(frame, bottom_chunks[0], state, config);
-    history_panel::render(frame, bottom_chunks[1], state, config);
+        security_panel::render(frame, bottom_chunks[0], state, config);
+        history_panel::render(frame, bottom_chunks[1], state, config);
 
-    render_status_bar(frame, main_chunks[3], state, config);
+        render_status_bar(frame, main_chunks[3], state, config);
+    }
 
     alert_toast::render(frame, area, state, config);
 }

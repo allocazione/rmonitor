@@ -1540,6 +1540,7 @@ dependencies = [
  "dirs",
  "futures-util",
  "hostname",
+ "libc",
  "local-ip-address",
  "lru",
  "ratatui",

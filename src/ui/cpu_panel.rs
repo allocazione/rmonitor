@@ -32,7 +32,16 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfi
     }
 
     let num_cores = state.cpu_usages.len();
-    let cols: usize = if num_cores <= 8 { 2 } else { 4 };
+    let width = inner.width;
+    let cols: usize = if width < 40 {
+        1
+    } else if width < 80 {
+        2
+    } else if num_cores <= 8 {
+        2
+    } else {
+        4
+    };
     let rows = num_cores.div_ceil(cols);
 
     // Create row constraints

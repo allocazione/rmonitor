@@ -4,6 +4,11 @@
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
 Set-Location $ScriptDir
 
+Write-Host "╔══════════════════════════════════════════════════════╗" -ForegroundColor Blue
+Write-Host "║             rmonitor Build System                    ║" -ForegroundColor Blue
+Write-Host "╚══════════════════════════════════════════════════════╝" -ForegroundColor Blue
+Write-Host ""
+
 # Dependency Checks
 Write-Host "Checking dependencies..." -ForegroundColor Cyan
 $missingDeps = @()
@@ -37,24 +42,32 @@ if (Test-Path -Path $ExePath) {
     Copy-Item -Path $ExePath -Destination "$OutputDir\rmonitor.exe" -Force
     $endTime = Get-Date
     $duration = $endTime - $startTime
-    Write-Host "Build complete! (Duration: $($duration.Seconds)s) Executable located at: $OutputDir\rmonitor.exe" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "Build complete! " -NoNewline -ForegroundColor Green
+    Write-Host "(Duration: $($duration.Seconds)s)" -ForegroundColor White
+    Write-Host "Executable located at: " -NoNewline -ForegroundColor Green
+    Write-Host "$OutputDir\rmonitor.exe" -ForegroundColor Gray
+    Write-Host ""
+
+    $releasePath = Join-Path $ScriptDir $OutputDir
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    $pathElements = $userPath -split ";" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
+    
+    if ($pathElements -notcontains $releasePath) {
+        Write-Host "To run 'rmonitor' from anywhere, you can add the release directory to your PATH." -ForegroundColor Yellow
+        $addPath = Read-Host "Do you want to add $releasePath to your PATH? (Y/N)"
+        if ($addPath -eq "Y" -or $addPath -eq "y") {
+            [Environment]::SetEnvironmentVariable("Path", "$userPath;$releasePath", "User")
+            $env:Path = "$env:Path;$releasePath"
+            Write-Host "Directory added to PATH for current and future sessions." -ForegroundColor Green
+            Write-Host "You can now type 'rmonitor' from any new terminal window." -ForegroundColor Yellow
+        }
+        Write-Host ""
+    }
 
     $run = Read-Host "Do you want to run the program now? (Y/N)"
     if ($run -eq "Y" -or $run -eq "y") {
         & "$OutputDir\rmonitor.exe"
-    }
-
-    $currentDir = Get-Location
-    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-    $pathElements = $userPath -split ";" | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
-    
-    if ($pathElements -notcontains $currentDir.Path) {
-        $addPath = Read-Host "Do you want to add this directory to your PATH? (Y/N)"
-        if ($addPath -eq "Y" -or $addPath -eq "y") {
-            [Environment]::SetEnvironmentVariable("Path", "$userPath;$currentDir", "User")
-            $env:Path = "$env:Path;$currentDir"
-            Write-Host "Directory added to PATH for current and future sessions." -ForegroundColor Green
-        }
     }
 } else {
     Write-Host "Could not find compiled executable at $ExePath" -ForegroundColor Red

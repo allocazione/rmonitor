@@ -385,6 +385,7 @@ pub struct AppState {
     // ── User Commands ───────────────────────────────────────────────────
     pub user_commands: Vec<UserCommandInfo>,
     pub user_selected: usize,
+    pub user_history_scroll: u16,
     pub show_user_history: bool,
 
     // ── UI state ────────────────────────────────────────────────────────
@@ -474,6 +475,7 @@ impl AppState {
             processes_frozen: false,
             user_commands: Vec::new(),
             user_selected: 0,
+            user_history_scroll: 0,
             show_user_history: false,
             active_tab: ActiveTab::Dashboard,
             settings,

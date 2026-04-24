@@ -81,7 +81,35 @@ pub fn spawn_connection_watcher(store: &Store, config: &AppConfig) {
     let store = store.clone();
     let geo_cache = Arc::new(GeoIpCache::new(config));
 
-    #[cfg(any(target_os = "linux", target_os = "openbsd", target_os = "freebsd", target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        use crate::modules::security::unix::UnixConnectionProvider;
+        use crate::providers::ConnectionProvider;
+        use crate::core::state::AlertEntry;
+        use chrono::Utc;
+
+        // Check if running as root on Linux and notify if not
+        let is_root = unsafe { libc::getuid() == 0 };
+        if !is_root {
+            let store_c = store.clone();
+            tokio::spawn(async move {
+                let now = Utc::now();
+                let alert = AlertEntry {
+                    message: "Running without root: Security logs disabled. Try: sudo env \"PATH=$PATH\" rmonitor".into(),
+                    timestamp: now,
+                    expires_at: now + chrono::Duration::seconds(15),
+                };
+                store_c.write().await.push_alert(alert);
+            });
+        }
+
+        let provider = UnixConnectionProvider::new(config, geo_cache);
+        tokio::spawn(async move {
+            provider.watch_connections(&store).await;
+        });
+    }
+
+    #[cfg(any(target_os = "openbsd", target_os = "freebsd", target_os = "macos"))]
     {
         use crate::modules::security::unix::UnixConnectionProvider;
         use crate::providers::ConnectionProvider;
@@ -181,42 +209,65 @@ pub async fn run_event_loop(
                                     let mut st = store.write().await;
                                     if st.show_user_history {
                                         st.show_user_history = false;
+                                        st.user_history_scroll = 0;
                                     } else {
                                         return Ok(());
                                     }
                                 }
                                 KeyCode::Tab => {
-                                    store.write().await.active_tab = next_tab(ActiveTab::Dashboard);
+                                    let mut st = store.write().await;
+                                    st.active_tab = next_tab(ActiveTab::Dashboard);
+                                    st.show_user_history = false;
+                                    st.user_history_scroll = 0;
                                 }
                                 KeyCode::Char('1') => {
-                                    store.write().await.active_tab = ActiveTab::Dashboard;
+                                    let mut st = store.write().await;
+                                    st.active_tab = ActiveTab::Dashboard;
+                                    st.show_user_history = false;
+                                    st.user_history_scroll = 0;
                                 }
                                 KeyCode::Char('2') => {
-                                    store.write().await.active_tab = ActiveTab::Docker;
+                                    let mut st = store.write().await;
+                                    st.active_tab = ActiveTab::Docker;
+                                    st.show_user_history = false;
+                                    st.user_history_scroll = 0;
                                 }
                                 KeyCode::Char('3') => {
-                                    store.write().await.active_tab = ActiveTab::Processes;
+                                    let mut st = store.write().await;
+                                    st.active_tab = ActiveTab::Processes;
+                                    st.show_user_history = false;
+                                    st.user_history_scroll = 0;
                                 }
                                 KeyCode::Char('4') => {
-                                    store.write().await.active_tab = ActiveTab::Settings;
+                                    let mut st = store.write().await;
+                                    st.active_tab = ActiveTab::Settings;
+                                    st.show_user_history = false;
+                                    st.user_history_scroll = 0;
                                 }
                                 KeyCode::Up => {
                                     let mut st = store.write().await;
-                                    if st.user_selected > 0 {
+                                    if st.show_user_history {
+                                        st.user_history_scroll = st.user_history_scroll.saturating_sub(1);
+                                    } else if st.user_selected > 0 {
                                         st.user_selected -= 1;
                                     }
                                 }
                                 KeyCode::Down => {
                                     let mut st = store.write().await;
-                                    let max = st.user_commands.len().saturating_sub(1);
-                                    if st.user_selected < max {
-                                        st.user_selected += 1;
+                                    if st.show_user_history {
+                                        st.user_history_scroll = st.user_history_scroll.saturating_add(1);
+                                    } else {
+                                        let max = st.user_commands.len().saturating_sub(1);
+                                        if st.user_selected < max {
+                                            st.user_selected += 1;
+                                        }
                                     }
                                 }
                                 KeyCode::Enter => {
                                     let mut st = store.write().await;
                                     if !st.user_commands.is_empty() {
                                         st.show_user_history = !st.show_user_history;
+                                        st.user_history_scroll = 0;
                                     }
                                 }
                                 _ => {}

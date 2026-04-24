@@ -49,7 +49,11 @@ impl ConnectionProvider for UnixConnectionProvider {
                     "Cannot open {}: {} (try running as root)",
                     self.log_path.display(), e
                 );
-                store.write().await.permission_warnings.push(msg);
+                // Only push warning if it doesn't already exist to avoid spamming the UI
+                let mut st = store.write().await;
+                if !st.permission_warnings.contains(&msg) {
+                    st.permission_warnings.push(msg);
+                }
                 return;
             }
         };

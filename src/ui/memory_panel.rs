@@ -19,7 +19,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, config: &AppConfi
         let used_gb = state.mem_used as f64 / 1_073_741_824.0;
         let total_gb = state.mem_total as f64 / 1_073_741_824.0;
         let pct = (state.mem_used as f64 / state.mem_total as f64) * 100.0;
-        format!(" Memory: {:.1} / {:.1} GB ({:.0}%) ", used_gb, total_gb, pct)
+        if area.width < 30 {
+            format!(" Mem: {:.0}% ", pct)
+        } else if area.width < 50 {
+            format!(" Mem: {:.1}G/{:.1}G ({:.0}%) ", used_gb, total_gb, pct)
+        } else {
+            format!(" Memory: {:.1} / {:.1} GB ({:.0}%) ", used_gb, total_gb, pct)
+        }
     } else {
         " Memory ".to_string()
     };
