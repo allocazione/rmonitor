@@ -16,7 +16,68 @@ if [[ "$OSTYPE" == "linux-gnu"* ]]; then
 fi
 
 if [ ${#MISSING_DEPS[@]} -ne 0 ]; then
-    echo "Error: Missing dependencies: ${MISSING_DEPS[*]}"
+    echo "Error: Missing dependencies:"
+    for dep in "${MISSING_DEPS[@]}"; do
+        echo "  - $dep"
+    done
+    echo ""
+
+    # Detect OS and suggest install commands
+    RUSTUP_CMD="  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        echo "To install the missing dependencies on macOS (Homebrew):"
+        for dep in "${MISSING_DEPS[@]}"; do
+            case "$dep" in
+                rust/cargo)  echo "$RUSTUP_CMD" ;;
+                pkg-config)  echo "  brew install pkg-config" ;;
+                clang)       echo "  brew install llvm" ;;
+                # lld is bundled inside the Homebrew llvm package
+                lld)         echo "  brew install llvm  # lld is included in the llvm package" ;;
+                openssl-dev) echo "  brew install openssl" ;;
+            esac
+        done
+    elif [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        if command -v apt-get &> /dev/null; then
+            echo "To install the missing dependencies on Debian/Ubuntu:"
+            for dep in "${MISSING_DEPS[@]}"; do
+                case "$dep" in
+                    rust/cargo)  echo "$RUSTUP_CMD" ;;
+                    pkg-config)  echo "  sudo apt-get install -y pkg-config" ;;
+                    clang)       echo "  sudo apt-get install -y clang" ;;
+                    lld)         echo "  sudo apt-get install -y lld" ;;
+                    openssl-dev) echo "  sudo apt-get install -y libssl-dev" ;;
+                esac
+            done
+        elif command -v dnf &> /dev/null; then
+            echo "To install the missing dependencies on Fedora/RHEL:"
+            for dep in "${MISSING_DEPS[@]}"; do
+                case "$dep" in
+                    rust/cargo)  echo "$RUSTUP_CMD" ;;
+                    pkg-config)  echo "  sudo dnf install -y pkg-config" ;;
+                    clang)       echo "  sudo dnf install -y clang" ;;
+                    lld)         echo "  sudo dnf install -y lld" ;;
+                    openssl-dev) echo "  sudo dnf install -y openssl-devel" ;;
+                esac
+            done
+        elif command -v pacman &> /dev/null; then
+            echo "To install the missing dependencies on Arch Linux:"
+            for dep in "${MISSING_DEPS[@]}"; do
+                case "$dep" in
+                    rust/cargo)  echo "$RUSTUP_CMD" ;;
+                    pkg-config)  echo "  sudo pacman -S pkg-config" ;;
+                    clang)       echo "  sudo pacman -S clang" ;;
+                    lld)         echo "  sudo pacman -S lld" ;;
+                    openssl-dev) echo "  sudo pacman -S openssl" ;;
+                esac
+            done
+        else
+            echo "Please install the missing dependencies using your system's package manager."
+        fi
+    else
+        echo "Please install the missing dependencies for your operating system."
+    fi
+
     exit 1
 fi
 
